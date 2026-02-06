@@ -1,0 +1,197 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider = "postgresql"
+  extensions = [vector]
+}
+
+enum LoginType {
+  PASSWORD @map("Password")
+  GOOGLE   @map("Google")
+}
+
+model User {
+  id String @id @default(uuid())
+
+  email String @unique
+
+  passwordHash String?
+  loginType    LoginType @default(PASSWORD)
+  firstName    String
+  lastName     String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  styleProfile  UserStyleProfile?
+  collections   Collection[]
+  savedProducts SavedProduct[]
+  feedbacks     Feedback[]
+  otps          Otp[]
+
+  isDeleted Boolean @default(false) @map("is_deleted")
+}
+
+model UserStyleProfile {
+  userId String @id @map("user_id")
+  user   User   @relation(fields: [userId], references: [id])
+
+  genderPreference  String?  @map("gender_preference") // 'men', 'women', 'both'
+  styleVibe         String[] @map("style_vibe") // ["casual","streetWear"]
+  favoriteColorsHex String[] @map("favorite_colors_hex") // ["#ff3b3b", "#000000"]
+
+  topSize    String? @map("top_size")
+  bottomSize String? @map("bottom_size")
+  shoeSize   String? @map("shoe_size")
+
+  favoriteBrands String[] @map("favorite_brands")
+
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at")
+
+  @@map("user_style_profiles")
+}
+
+model Product {
+  id           String                       @id @default(uuid()) @db.Uuid
+  title        String
+  description  String?
+  brand        String?
+  category     String?
+  color        String[] // ["red", "maroon"]
+  size         String[] // ["S", "M", "L"]
+  styleTags    String[]                     @map("style_tags") // ["party", "summer", "evening"]
+  price        Int?
+  retailer     String?
+  productUrl   String?                      @unique @map("product_url")
+  images       String[] // array of URLs
+  inStock      Boolean                      @default(true) @map("in_stock")
+  basicScraped Boolean                      @default(true) @map("basic_scraped")
+  fullScraped  Boolean                      @default(false) @map("full_scraped")
+  lastScraped  DateTime?                    @map("last_scraped")
+  embedding    Unsupported("vector(1536)")?
+  createdAt    DateTime                     @default(now()) @map("created_at")
+  updatedAt    DateTime                     @updatedAt @map("updated_at")
+  savedIn      SavedProduct[]
+
+  @@index([category])
+  @@index([brand])
+  @@index([retailer])
+  @@index([price])
+  @@index([inStock])
+  @@index([basicScraped])
+  @@index([fullScraped])
+  @@map("products")
+}
+
+model Chat {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String?  @map("user_id") @db.Uuid
+  title     String?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  messages Message[]
+  state    ChatState?
+
+  @@map("chats")
+}
+
+enum MessageRole {
+  USER      @map("user")
+  ASSISTANT @map("assistant")
+  SYSTEM    @map("system")
+}
+
+model Message {
+  id        String      @id @default(uuid()) @db.Uuid
+  chatId    String      @map("chat_id") @db.Uuid
+  role      MessageRole
+  content   String
+  createdAt DateTime    @default(now()) @map("created_at")
+
+  chat Chat @relation(fields: [chatId], references: [id], onDelete: Cascade)
+
+  @@map("messages")
+}
+
+model ChatState {
+  chatId        String                       @id @map("chat_id") @db.Uuid
+  currentQuery  String?                      @map("current_query")
+  filters       Json?
+  lastEmbedding Unsupported("vector(1536)")? @map("last_embedding")
+
+  chat Chat @relation(fields: [chatId], references: [id], onDelete: Cascade)
+
+  @@map("chat_state")
+}
+
+model Collection {
+  id          String   @id @default(uuid()) @db.Uuid
+  userId      String   @map("user_id")
+  name        String
+  description String?
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  user          User           @relation(fields: [userId], references: [id])
+  savedProducts SavedProduct[]
+
+  @@index([userId])
+  @@map("collections")
+}
+
+model SavedProduct {
+  userId       String   @map("user_id")
+  productId    String   @map("product_id") @db.Uuid
+  collectionId String   @map("collection_id") @db.Uuid
+  savedAt      DateTime @default(now()) @map("saved_at")
+
+  user       User       @relation(fields: [userId], references: [id])
+  product    Product    @relation(fields: [productId], references: [id])
+  collection Collection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+
+  @@id([userId, productId, collectionId])
+  @@index([collectionId])
+  @@index([savedAt])
+  @@map("saved_products")
+}
+
+model Feedback {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String?  @map("user_id")
+  rating    Int
+  topic     String
+  details   String?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User? @relation(fields: [userId], references: [id])
+
+  @@map("feedbacks")
+}
+
+enum OtpType {
+  RESET_PASSWORD
+}
+
+model Otp {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  hash      String
+  type      OtpType
+  expiresAt DateTime @map("expires_at")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("otps")
+}
+
+

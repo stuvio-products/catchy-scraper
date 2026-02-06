@@ -1,0 +1,7 @@
+{
+    "quotes.toscrape.com": "BROWSER",
+    "books.toscrape.com": "FETCH",
+    "snapdeal.in": "FETCH",
+    "flipkart.com": "FETCH",
+    "meesho.com": "BROWSER"
+}
