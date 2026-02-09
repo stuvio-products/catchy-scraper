@@ -11,6 +11,7 @@ export class AuthMapper {
     return {
       id: user.id,
       email: user.email,
+      username: user.username,
       firstName: user.firstName,
       lastName: user.lastName,
       createdAt: user.createdAt,
