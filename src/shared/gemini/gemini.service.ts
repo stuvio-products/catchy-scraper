@@ -39,7 +39,11 @@ export class GeminiService implements OnModuleInit {
     try {
       const result = await this.client.models.embedContent({
         model: this.embeddingModel,
-        contents: text,
+        contents: [
+          {
+            parts: [{ text }],
+          },
+        ],
         config: {
           outputDimensionality: this.outputDimensionality,
         },

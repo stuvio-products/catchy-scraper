@@ -9,6 +9,6 @@ import { ScrapeOrchestratorService } from './services/scrape-orchestrator.servic
 @Module({
   imports: [ConfigModule, DomainModule],
   providers: [FetchScraper, BrowserClientScraper, ScrapeOrchestratorService],
-  exports: [ScrapeOrchestratorService],
+  exports: [ScrapeOrchestratorService, FetchScraper],
 })
 export class ScrapingModule {}

@@ -5,6 +5,7 @@ import { validationSchema } from '../../shared/config/env.validation';
 import { QUEUE_NAMES } from '../../shared/queue/queue.constants';
 import { ScrapingModule } from '../../shared/scraping/scraping.module';
 import { ScrapeProcessor } from './processors/scrape.processor';
+import { PrismaModule } from '@/shared/prisma/prisma.module';
 
 @Module({
   imports: [
@@ -27,6 +28,7 @@ import { ScrapeProcessor } from './processors/scrape.processor';
       name: QUEUE_NAMES.SCRAPE_QUEUE,
     }),
     ScrapingModule,
+    PrismaModule,
   ],
   providers: [ScrapeProcessor],
 })
