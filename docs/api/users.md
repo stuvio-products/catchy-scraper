@@ -21,9 +21,14 @@ Authorization: Bearer <accessToken>
 ```json
 {
   "id": "uuid",
+  "id": "uuid",
   "email": "user@example.com",
+  "username": "john_doe",
   "firstName": "John",
   "lastName": "Doe",
+  "phone": "1234567890",
+  "bio": "Software Engineer",
+  "profileImage": "https://example.com/image.png",
   "createdAt": "2026-01-28T10:20:39.229Z",
   "styleProfile": {
     "genderPreference": "men",
@@ -58,8 +63,12 @@ Authorization: Bearer <accessToken>
 ```json
 {
   "email": "newemail@example.com",
+  "username": "new_username",
   "firstName": "NewName",
-  "lastName": "NewLastName"
+  "lastName": "NewLastName",
+  "phone": "1234567890",
+  "bio": "Software Engineer",
+  "profileImage": "https://example.com/image.png"
 }
 ```
 

@@ -22,7 +22,8 @@ enum LoginType {
 model User {
   id String @id @default(uuid())
 
-  email String @unique
+  email    String @unique
+  username String @unique
 
   passwordHash String?
   loginType    LoginType @default(PASSWORD)
@@ -38,6 +39,10 @@ model User {
   feedbacks     Feedback[]
   otps          Otp[]
 
+  phone        String?
+  bio          String?
+  profileImage String? @map("profile_image")
+
   isDeleted Boolean @default(false) @map("is_deleted")
 }
 
@@ -49,9 +54,9 @@ model UserStyleProfile {
   styleVibe         String[] @map("style_vibe") // ["casual","streetWear"]
   favoriteColorsHex String[] @map("favorite_colors_hex") // ["#ff3b3b", "#000000"]
 
-  topSize    String? @map("top_size")
-  bottomSize String? @map("bottom_size")
-  shoeSize   String? @map("shoe_size")
+  topSize    Json? @map("top_size")
+  bottomSize Json? @map("bottom_size")
+  shoeSize   Json? @map("shoe_size")
 
   favoriteBrands String[] @map("favorite_brands")
 

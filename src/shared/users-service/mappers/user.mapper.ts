@@ -8,15 +8,25 @@ export interface UserDto {
   firstName: string;
   lastName: string;
   createdAt: Date;
+  phone?: string;
+  bio?: string;
+  profileImage: string | null;
+  username: string;
+}
+
+export interface SizePreference {
+  men?: string;
+  women?: string;
 }
 
 export interface UserStyleProfileDto {
+  username: string;
   genderPreference?: string;
   styleVibe?: string[];
   favoriteColorsHex?: string[];
-  topSize?: string;
-  bottomSize?: string;
-  shoeSize?: string;
+  topSize?: SizePreference;
+  bottomSize?: SizePreference;
+  shoeSize?: SizePreference;
   favoriteBrands?: string[];
 }
 
@@ -30,20 +40,29 @@ export class UserMapper {
     return {
       id: user.id,
       email: user.email,
+      username: user.username,
       firstName: user.firstName,
       lastName: user.lastName,
       createdAt: user.createdAt,
+      phone: user.phone ?? undefined,
+      bio: user.bio ?? undefined,
+      profileImage: user.profileImage,
     };
   }
 
-  toStyleProfileDto(styleProfile: UserStyleProfile): UserStyleProfileDto {
+  toStyleProfileDto(
+    username: string,
+    styleProfile: UserStyleProfile,
+  ): UserStyleProfileDto {
     return {
+      username,
       genderPreference: styleProfile.genderPreference ?? undefined,
       styleVibe: styleProfile.styleVibe as string[],
       favoriteColorsHex: styleProfile.favoriteColorsHex as string[],
-      topSize: styleProfile.topSize ?? undefined,
-      bottomSize: styleProfile.bottomSize ?? undefined,
-      shoeSize: styleProfile.shoeSize ?? undefined,
+      topSize: (styleProfile.topSize as unknown as SizePreference) ?? undefined,
+      bottomSize:
+        (styleProfile.bottomSize as unknown as SizePreference) ?? undefined,
+      shoeSize: (styleProfile.shoeSize as unknown as SizePreference) ?? undefined,
       favoriteBrands: styleProfile.favoriteBrands as string[],
     };
   }
@@ -52,7 +71,7 @@ export class UserMapper {
     return {
       ...this.toDto(user),
       styleProfile: user.styleProfile
-        ? this.toStyleProfileDto(user.styleProfile)
+        ? this.toStyleProfileDto(user.username, user.styleProfile)
         : null,
     };
   }

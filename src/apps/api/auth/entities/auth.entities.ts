@@ -26,5 +26,5 @@ export class UserWithToken {
 
 export type RequestUser = Pick<
   User,
-  'id' | 'email' | 'firstName' | 'lastName' | 'createdAt'
+  'id' | 'email' | 'username' | 'firstName' | 'lastName' | 'createdAt'
 >;

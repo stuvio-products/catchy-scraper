@@ -14,4 +14,21 @@ export class UpdateUserDto {
   @IsString()
   @MinLength(2)
   lastName?: string;
+
+  @IsOptional()
+  @IsString()
+  @MinLength(3)
+  username?: string;
+
+  @IsOptional()
+  @IsString()
+  phone?: string;
+
+  @IsOptional()
+  @IsString()
+  bio?: string;
+
+  @IsOptional()
+  @IsString()
+  profileImage?: string;
 }

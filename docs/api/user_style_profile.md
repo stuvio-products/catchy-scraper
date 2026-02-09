@@ -27,9 +27,18 @@ Retrieves the style profile for the authenticated user.
   "genderPreference": "men",
   "styleVibe": ["casual", "streetWear"],
   "favoriteColorsHex": ["#000000", "#FFFFFF"],
-  "topSize": "L",
-  "bottomSize": "32",
-  "shoeSize": "10",
+  "topSize": {
+    "men": "L",
+    "women": "M"
+  },
+  "bottomSize": {
+    "men": "32",
+    "women": "28"
+  },
+  "shoeSize": {
+    "men": "10",
+    "women": "7"
+  },
   "favoriteBrands": ["Nike", "Adidas"],
   "updatedAt": "2023-10-27T10:00:00.000Z"
 }
@@ -46,15 +55,15 @@ Creates a new style profile or updates the existing one for the authenticated us
 
 #### Request Body Parameters
 
-| Parameter           | Type     | Required | Description                           | Enum / Example            |
-| :------------------ | :------- | :------- | :------------------------------------ | :------------------------ |
-| `genderPreference`  | string   | No       | User's gender preference for clothes. | `men`, `women`, `both`    |
-| `styleVibe`         | string[] | No       | List of style vibes.                  | `["casual", "formal"]`    |
-| `favoriteColorsHex` | string[] | No       | List of favorite colors in Hex.       | `["#FF0000"]`             |
-| `topSize`           | string   | No       | User's top size.                      | `S`, `M`, `L`, `XL`, etc. |
-| `bottomSize`        | string   | No       | User's bottom size.                   | `30`, `32`, `M`, etc.     |
-| `shoeSize`          | string   | No       | User's shoe size.                     | `9`, `10`, `42`, etc.     |
-| `favoriteBrands`    | string[] | No       | List of favorite brands.              | `["Zara", "H&M"]`         |
+| Parameter           | Type     | Required | Description                           | Enum / Example                 |
+| :------------------ | :------- | :------- | :------------------------------------ | :----------------------------- |
+| `genderPreference`  | string   | No       | User's gender preference for clothes. | `men`, `women`, `both`         |
+| `styleVibe`         | string[] | No       | List of style vibes.                  | `["casual", "formal"]`         |
+| `favoriteColorsHex` | string[] | No       | List of favorite colors in Hex.       | `["#FF0000"]`                  |
+| `topSize`           | object   | No       | Object containing men/women sizes.    | `{"men": "L", "women": "M"}`   |
+| `bottomSize`        | object   | No       | Object containing men/women sizes.    | `{"men": "32", "women": "28"}` |
+| `shoeSize`          | object   | No       | Object containing men/women sizes.    | `{"men": "10", "women": "7"}`  |
+| `favoriteBrands`    | string[] | No       | List of favorite brands.              | `["Zara", "H&M"]`              |
 
 #### Example Request
 
@@ -63,9 +72,18 @@ Creates a new style profile or updates the existing one for the authenticated us
   "genderPreference": "women",
   "styleVibe": ["boho", "chic"],
   "favoriteColorsHex": ["#FFC0CB", "#FFFFFF"],
-  "topSize": "S",
-  "bottomSize": "28",
-  "shoeSize": "7"
+  "topSize": {
+    "men": "S",
+    "women": "M"
+  },
+  "bottomSize": {
+    "men": "30",
+    "women": "28"
+  },
+  "shoeSize": {
+    "men": "8",
+    "women": "7"
+  }
 }
 ```
 

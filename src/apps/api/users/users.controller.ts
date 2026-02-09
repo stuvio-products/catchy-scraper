@@ -44,6 +44,15 @@ export class UsersController {
       }
     }
 
+    if (body.username && body.username !== user.username) {
+      const existingUsername = await this.usersRepository.findByUsername(
+        body.username,
+      );
+      if (existingUsername) {
+        throw new ConflictException('Username already in use');
+      }
+    }
+
     const updatedUser = await this.usersRepository.update(user.id, body);
     return this.userMapper.toDto(updatedUser);
   }
@@ -60,7 +69,7 @@ export class UsersController {
       user.id,
       body,
     );
-    return this.userMapper.toStyleProfileDto(styleProfile);
+    return this.userMapper.toStyleProfileDto(user.username, styleProfile);
   }
 
   @Get('me/style-profile')
@@ -70,7 +79,7 @@ export class UsersController {
       user.id,
     );
     return styleProfile
-      ? this.userMapper.toStyleProfileDto(styleProfile)
+      ? this.userMapper.toStyleProfileDto(user.username, styleProfile)
       : null;
   }
 

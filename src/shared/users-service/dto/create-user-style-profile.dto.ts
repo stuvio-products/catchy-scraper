@@ -1,4 +1,16 @@
-import { IsArray, IsEnum, IsOptional, IsString } from 'class-validator';
+import { IsArray, IsEnum, IsOptional, IsString, ValidateNested } from 'class-validator';
+import { Type } from 'class-transformer';
+
+
+export class SizePreferenceDto {
+  @IsOptional()
+  @IsString()
+  men?: string;
+
+  @IsOptional()
+  @IsString()
+  women?: string;
+}
 
 export class CreateUserStyleProfileDto {
   @IsOptional()
@@ -17,19 +29,23 @@ export class CreateUserStyleProfileDto {
   favoriteColorsHex?: string[];
 
   @IsOptional()
-  @IsString()
-  topSize?: string;
+  @Type(() => SizePreferenceDto)
+  @ValidateNested()
+  topSize?: SizePreferenceDto;
 
   @IsOptional()
-  @IsString()
-  bottomSize?: string;
+  @Type(() => SizePreferenceDto)
+  @ValidateNested()
+  bottomSize?: SizePreferenceDto;
 
   @IsOptional()
-  @IsString()
-  shoeSize?: string;
+  @Type(() => SizePreferenceDto)
+  @ValidateNested()
+  shoeSize?: SizePreferenceDto;
 
   @IsOptional()
   @IsArray()
   @IsString({ each: true })
   favoriteBrands?: string[];
 }
+
