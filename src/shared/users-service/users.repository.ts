@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '@/shared/prisma/prisma.service';
-import { User, UserStyleProfile } from '@prisma/client';
+import { User, UserStyleProfile, LoginType } from '@prisma/client';
+import { getEnumKeyAsType } from '@/shared/lib/util';
 import { CreateUserStyleProfileDto } from './dto/create-user-style-profile.dto';
 import { UserWithStyleProfile } from './entities/user.entity';
 
@@ -44,7 +45,7 @@ export class UsersRepository {
         passwordHash: data.passwordHash,
         firstName: data.firstName,
         lastName: data.lastName,
-        loginType: 'PASSWORD',
+        loginType: getEnumKeyAsType(LoginType, LoginType.PASSWORD) as LoginType,
       },
     });
   }

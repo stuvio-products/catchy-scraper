@@ -19,39 +19,45 @@ All endpoints described below require authentication. You must include a valid J
 
 ## 1. Initial Search
 
-**Endpoint:** `POST /search`
+**Endpoint:** `GET /search`
 
-Initiates a new search session. This creates a new Chat entity and returns the initial results along with a `chatId`.
+Initiates a new search. If results exist in the database, they are returned immediately (ordered by relevance). If no results are found, the system performs a live scrape across integrated retailers, persists the data, and enriches the top results with full details before returning.
 
-**Request Body:**
+**Query Parameters:**
 
-```json
-{
-  "query": "red dress", // Required: The search term
-  "limit": 10// Optional: Number of results (default: 10)
-```
+- `query`: (Required) The search term.
+- `lastScore`: (Optional) The similarity score from the last item of the previous page (for pagination).
+- `lastId`: (Optional) The product ID from the last item of the previous page (for pagination).
+- `limit`: (Optional) Number of results to return (default: 20).
 
 **Response:**
 
 ```json
 {
-  "query": "red dress",
+  "source": "database", // or "live_scrape"
   "products": [
     {
       "id": "uuid...",
       "title": "Red Satin Dress",
       "price": 1200,
-      "similarity": 0.98,
+      "brand": "Brand Name",
+      "category": "Dresses",
+      "similarity": 0.9854, // Relevance score (no longer thresholded)
       "images": ["url..."],
-      "inStock": true,
-      ...
+      "productUrl": "url...",
+      "retailer": "myntra",
+      "scrapStatus": "DETAILED", // Live results are enriched to DETAILED status
+      "lastScraped": "2024-02-10T..."
     }
   ],
-  "total": 10,
-  "nextCursor": 0.91,      // Use this value for the 'cursor' param in next request
+  "total": 150,
+  "nextCursor": {
+    "score": 0.9123,
+    "id": "uuid..."
+  },
   "hasMore": true,
-  "chatId": "c123-456-uuid", // IMPORTANT: Save this to use in /chat endpoints
-  "message": "I found 10 items matching \"red dress\"."
+  "chatId": "c123-456-uuid", // Save this for chat session interactions
+  "message": "Here are the products matching your query"
 }
 ```
 
@@ -109,11 +115,12 @@ Fetch the next page of results for an existing chat session. This maintains the 
 
 **Query Parameters:**
 
-- `cursor`: The `nextCursor` value from the previous page info.
-- `limit`: Number of items to fetch (default: 10).
+- `lastScore`: The `score` value from `nextCursor` of the previous page.
+- `lastId`: The `id` value from `nextCursor` of the previous page.
+- `limit`: Number of items to fetch (default: 20).
 
 **Example Request:**
-`GET /chat/c123-456-uuid/results?cursor=0.85&limit=10`
+`GET /chat/c123-456-uuid/results?lastScore=0.85&lastId=uuid...&limit=20`
 
 **Response:**
 
@@ -121,7 +128,10 @@ Fetch the next page of results for an existing chat session. This maintains the 
 {
   "chatId": "c123-456-uuid",
   "products": [ ... next set of products ... ],
-  "nextCursor": 0.82,
+  "nextCursor": {
+    "score": 0.82,
+    "id": "uuid..."
+  },
   "hasMore": true
 }
 ```

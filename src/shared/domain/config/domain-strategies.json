@@ -1,7 +1,6 @@
 {
-  "quotes.toscrape.com": "BROWSER",
-  "books.toscrape.com": "FETCH",
-  "snapdeal.in": "FETCH",
+  "myntra.com": "FETCH",
   "flipkart.com": "FETCH",
-  "meesho.com": "BROWSER"
+  "meesho.com": "BROWSER",
+  "amazon.in": "BROWSER"
 }

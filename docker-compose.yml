@@ -140,7 +140,9 @@ services:
       BROWSER_TIMEOUT_MS: 30000
       PROXY_PROVIDER: fake
       FAKE_PROXY_COST_PER_MB: 0.001
-    # NOT exposed to host (internal only)
+    ports:
+      - "3001:3001"
+    # NOT exposed to host (internal only) - UPDATED: Now exposed for local dev
     restart: unless-stopped
     networks:
       - scraper-network

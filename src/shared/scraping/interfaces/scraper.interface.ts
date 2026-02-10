@@ -3,11 +3,16 @@ import { ScrapeStrategy } from '@/shared/domain/enums/scrape-strategy.enum';
 export interface ScrapeRequest {
   url: string;
   domain: string;
+  useStrategy?: ScrapeStrategy;
   options?: {
     waitForSelector?: string;
     timeout?: number;
     screenshot?: boolean;
     userAgent?: string;
+    // Scroll configuration for infinite scroll/pagination
+    scrollIterations?: number;
+    scrollDistance?: number;
+    delayBetweenScrolls?: number;
   };
 }
 

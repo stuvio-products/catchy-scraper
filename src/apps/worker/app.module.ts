@@ -5,6 +5,7 @@ import { validationSchema } from '../../shared/config/env.validation';
 import { QUEUE_NAMES } from '../../shared/queue/queue.constants';
 import { ScrapingModule } from '../../shared/scraping/scraping.module';
 import { ScrapeProcessor } from './processors/scrape.processor';
+import { ProductDetailProcessor } from './processors/product-detail.processor';
 import { PrismaModule } from '@/shared/prisma/prisma.module';
 
 @Module({
@@ -27,9 +28,12 @@ import { PrismaModule } from '@/shared/prisma/prisma.module';
     BullModule.registerQueue({
       name: QUEUE_NAMES.SCRAPE_QUEUE,
     }),
+    BullModule.registerQueue({
+      name: QUEUE_NAMES.PRODUCT_DETAIL_QUEUE,
+    }),
     ScrapingModule,
     PrismaModule,
   ],
-  providers: [ScrapeProcessor],
+  providers: [ScrapeProcessor, ProductDetailProcessor],
 })
 export class WorkerAppModule {}

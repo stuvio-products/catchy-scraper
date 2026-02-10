@@ -1,6 +1,7 @@
 import { Injectable, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '@/shared/prisma/prisma.service';
 import { OtpType } from '@prisma/client';
+import { getEnumKeyAsType } from '@/shared/lib/util';
 import * as bcrypt from 'bcrypt';
 import * as crypto from 'crypto';
 
@@ -15,7 +16,7 @@ export class OtpService {
   async generateOtp(userId: string, type: OtpType): Promise<string> {
     // Check for throttle
     const lastOtp = await this.prisma.client.otp.findFirst({
-      where: { userId, type },
+      where: { userId, type: getEnumKeyAsType(OtpType, type) as OtpType },
       orderBy: { createdAt: 'desc' },
     });
 
@@ -32,7 +33,7 @@ export class OtpService {
 
       // Delete existing OTP as per requirement: "same user generates an otp and there is existing one than delete it"
       await this.prisma.client.otp.deleteMany({
-        where: { userId, type },
+        where: { userId, type: getEnumKeyAsType(OtpType, type) as OtpType },
       });
     }
 
@@ -46,7 +47,7 @@ export class OtpService {
     await this.prisma.client.otp.create({
       data: {
         userId,
-        type,
+        type: getEnumKeyAsType(OtpType, type) as OtpType,
         hash,
         expiresAt,
       },
@@ -63,7 +64,7 @@ export class OtpService {
     const otpRecord = await this.prisma.client.otp.findFirst({
       where: {
         userId,
-        type,
+        type: getEnumKeyAsType(OtpType, type) as OtpType,
         expiresAt: { gt: new Date() },
       },
     });

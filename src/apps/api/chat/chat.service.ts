@@ -16,6 +16,8 @@ export class ChatService {
     userId: string,
     initialQuery: string,
     initialFilters: any = {},
+    intentConfidence?: any,
+    mode: string = 'SEARCH',
   ): Promise<Chat> {
     // Generate initial embedding for the state
     const embedding = await this.geminiService.generateEmbedding(initialQuery);
@@ -24,6 +26,8 @@ export class ChatService {
       userId,
       initialQuery,
       initialFilters,
+      intentConfidence,
+      mode,
     });
 
     await this.chatRepository.updateChatStateEmbedding(chat.id, embedding);

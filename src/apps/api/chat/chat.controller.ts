@@ -10,7 +10,7 @@ import {
   Query,
 } from '@nestjs/common';
 import { ChatService } from './chat.service';
-// import { SearchService } from '@/apps/api/search/search.service';
+import { SearchService } from '@/apps/api/search/search.service';
 import { SendMessageDto } from './dto/chat.dto';
 import { MessageRole } from '@prisma/client';
 import { UseGuards, UnauthorizedException } from '@nestjs/common';
@@ -23,8 +23,8 @@ import type { RequestUser } from '@/apps/api/auth/entities/auth.entities';
 export class ChatController {
   constructor(
     private readonly chatService: ChatService,
-    // @Inject(forwardRef(() => SearchService))
-    // private readonly searchService: SearchService,
+    @Inject(forwardRef(() => SearchService))
+    private readonly searchService: SearchService,
   ) {}
 
   @Get()
@@ -43,19 +43,25 @@ export class ChatController {
     if (chat.userId !== user.id)
       throw new UnauthorizedException('Access denied');
 
-    // const limitNum = limit ? parseInt(limit, 10) : 10;
-    // const cursorNum = cursor ? parseFloat(cursor) : undefined;
+    const limitNum = limit ? parseInt(limit, 10) : 10;
 
-    // const searchResult = await this.searchService.searchWithState(
-    //   chat.state!,
-    //   limitNum,
-    //   cursorNum,
-    // );
+    // Parse cursor (score_id format or just JSON)
+    let parsedCursor: { score: number; id: string } | undefined;
+    if (cursor) {
+      try {
+        parsedCursor = JSON.parse(cursor);
+      } catch {}
+    }
+
+    const searchResult = await this.searchService.searchWithState(
+      chat.state!,
+      limitNum,
+      parsedCursor,
+    );
 
     return {
       chatId,
-      // ...searchResult,
-      message: 'Search results unavailable (SearchModule not yet migrated)',
+      ...searchResult,
     };
   }
 
@@ -79,11 +85,15 @@ export class ChatController {
     );
 
     // 3. Run Search with new State
-    // const searchResult = await this.searchService.searchWithState(updatedState);
+    // Fetch first page of results for the new intent
+    const searchResult = await this.searchService.searchWithState(
+      updatedState,
+      10, // Default limit
+      undefined, // No cursor for first page
+    );
 
     // 4. Add Assistant Message
     // Summarize the action or just say "Here are the results"
-    // Ideally, we could generate a response text using LLM too, but for now simple response.
     const assistantContent =
       `Here are some ${updatedState.currentQuery} options.` +
       (updatedState.filters
@@ -98,8 +108,8 @@ export class ChatController {
 
     return {
       chatId,
-      // ...searchResult,
       message: assistantContent,
+      ...searchResult, // Include products in response
     };
   }
 

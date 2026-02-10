@@ -5,9 +5,11 @@ import { Job, Queue } from 'bullmq';
 import { InjectQueue } from '@nestjs/bullmq';
 import { QUEUE_NAMES } from '@/shared/queue/queue.constants';
 import { ScrapeJob } from '@/shared/queue/interfaces/scrape-job.interface';
+import { ProductDetailJob } from '@/shared/queue/interfaces/product-detail-job.interface';
 import { ScrapeOrchestratorService } from '@/shared/scraping/services/scrape-orchestrator.service';
-import { PrismaService } from '@/shared/prisma/prisma.service';
-import { FlipkartParser } from '@/shared/scraping/scrapers/flipkart-parser';
+import { ParserService } from '@/shared/scraping/services/parser.service';
+import { ProductSaveService } from '@/shared/scraping/services/product-save.service';
+import { ScrapStatus } from '@prisma/client';
 
 @Processor(QUEUE_NAMES.SCRAPE_QUEUE)
 export class ScrapeProcessor extends WorkerHost {
@@ -17,19 +19,37 @@ export class ScrapeProcessor extends WorkerHost {
   constructor(
     private readonly orchestrator: ScrapeOrchestratorService,
     private readonly configService: ConfigService,
-    private readonly prisma: PrismaService,
-    @InjectQueue(QUEUE_NAMES.SCRAPE_QUEUE)
-    private scrapeQueue: Queue<ScrapeJob>,
+    private readonly parserService: ParserService,
+    private readonly productSaveService: ProductSaveService,
+    @InjectQueue(QUEUE_NAMES.PRODUCT_DETAIL_QUEUE)
+    private productDetailQueue: Queue<ProductDetailJob>,
   ) {
     super();
     this.concurrency =
       this.configService.get<number>('WORKER_CONCURRENCY') || 4;
   }
 
+  private readonly BATCH_SIZE = 10;
+
+  private chunkArray<T>(array: T[], size: number): T[][] {
+    const result: T[][] = [];
+    for (let i = 0; i < array.length; i += size) {
+      result.push(array.slice(i, i + size));
+    }
+    return result;
+  }
+
   async process(job: Job<ScrapeJob>): Promise<any> {
     const { jobId, url, domain, options } = job.data;
 
-    this.logger.log(`Processing job ${jobId}: ${url}`);
+    if (!url || !domain) {
+      this.logger.warn(
+        `Received job ${job.id} (${job.name}) without URL or Domain. Skipping (likely a misplaced batch job).`,
+      );
+      return;
+    }
+
+    this.logger.log(`Processing search job ${jobId}: ${url}`);
 
     try {
       const result = await this.orchestrator.scrape({
@@ -38,18 +58,22 @@ export class ScrapeProcessor extends WorkerHost {
         options,
       });
 
-      if (result.success) {
+      if (result.success && result.data) {
         this.logger.log(
           `Job ${jobId} completed successfully (${result.metadata.strategy}, ${result.metadata.duration}ms)`,
         );
 
-        // Domain specific handling
-        if (domain.includes('myntra.com') && result.data) {
+        // Domain specific handling (search results only)
+        if (domain.includes('myntra.com')) {
           await this.processMyntraData(result.data, jobId);
-        } else if (domain.includes('flipkart.com') && result.data) {
+        } else if (domain.includes('flipkart.com')) {
           await this.processFlipkartData(result.data, jobId);
+        } else if (domain.includes('meesho.com')) {
+          await this.processMeeshoData(result.data, jobId);
+        } else if (domain.includes('amazon.in')) {
+          await this.processAmazonData(result.data, jobId);
         }
-      } else {
+      } else if (!result.success) {
         this.logger.warn(`Job ${jobId} failed: ${result.error}`);
       }
 
@@ -59,52 +83,51 @@ export class ScrapeProcessor extends WorkerHost {
         `Job ${jobId} threw error: ${error.message}`,
         error.stack,
       );
-      throw error; // Let BullMQ handle retries
+
+      // Smart retry delays based on HTTP status codes
+      const errorMsg = error.message || '';
+      if (errorMsg.includes('429') || errorMsg.includes('rate limit')) {
+        // Rate limited — wait 60s before retry
+        throw Object.assign(error, {
+          delay: 60_000,
+          message: `[429 Rate Limited] ${errorMsg}`,
+        });
+      } else if (errorMsg.includes('503')) {
+        // Service unavailable — wait 15s before retry
+        throw Object.assign(error, {
+          delay: 15_000,
+          message: `[503 Unavailable] ${errorMsg}`,
+        });
+      }
+
+      throw error; // Let BullMQ handle retries with default backoff
     }
   }
 
   private async processFlipkartData(htmlContent: string, jobId: string) {
     try {
-      const products = FlipkartParser.parse(htmlContent);
+      const products = this.parserService.parseFlipkart(htmlContent);
       this.logger.log(`Found ${products.length} Flipkart products to save`);
 
-      for (const p of products) {
-        const productUrl = p.product_link;
+      // Save products with BASIC status
+      await this.productSaveService.upsertProducts(products, ScrapStatus.BASIC);
 
-        await this.prisma.client.product.upsert({
-          where: { productUrl: productUrl },
-          update: {
-            title: p.product_name,
-            price: p.current_price,
-            inStock: true,
-            images: [p.thumbnail],
-            lastScraped: new Date(),
-            basicScraped: true,
-          },
-          create: {
-            title: p.product_name,
-            price: p.current_price,
-            retailer: 'Flipkart',
-            productUrl: productUrl,
-            images: [p.thumbnail],
-            inStock: true,
-            lastScraped: new Date(),
-            basicScraped: true,
-            fullScraped: false,
-          },
-        });
+      // Queue detail scraping in batches
+      const validProducts = products.filter(
+        (p) => p.productUrl && !p.productUrl.includes('search?'),
+      );
+      const batches = this.chunkArray(validProducts, this.BATCH_SIZE);
 
-        // Queue Detail Scrape (Recursive)
-        // Only queue if it's a search result listing, not if we just scraped a detail page
-        if (productUrl && !productUrl.includes('search?')) {
-          await this.scrapeQueue.add('product-detail', {
-            jobId: `detail-flipkart-${Date.now()}-${Math.random().toString(36).substring(7)}`,
-            url: productUrl,
+      for (const batch of batches) {
+        await this.productDetailQueue.add('scrape-detail', {
+          jobId: `detail-flipkart-batch-${Date.now()}-${Math.random().toString(36).substring(7)}`,
+          products: batch.map((p) => ({
+            url: p.productUrl,
             domain: 'flipkart.com',
-            options: { timeout: 30000 },
-            createdAt: new Date(),
-          });
-        }
+            retailer: 'flipkart',
+          })),
+          createdAt: new Date(),
+        });
       }
     } catch (e) {
       this.logger.error(`Failed to process Flipkart data: ${e.message}`);
@@ -113,113 +136,107 @@ export class ScrapeProcessor extends WorkerHost {
 
   private async processMyntraData(htmlContent: string, jobId: string) {
     try {
-      const startPattern = 'window.__myx = ';
-      const startIndex = htmlContent.indexOf(startPattern);
+      const products = this.parserService.parseMyntra(htmlContent);
 
-      if (startIndex === -1) {
-        this.logger.warn('window.__myx not found in Myntra response');
+      if (products.length === 0) {
+        this.logger.warn('No products found in Myntra response');
         return;
       }
 
-      const jsonStart = startIndex + startPattern.length;
-      let braceCount = 0;
-      let inString = false;
-      let escapeNext = false;
-      let endIndex = jsonStart;
+      this.logger.log(`Found ${products.length} Myntra products to save`);
 
-      // Manual JSON extraction based on brace counting
-      for (let i = jsonStart; i < htmlContent.length; i++) {
-        const char = htmlContent[i];
+      // Save products with BASIC status
+      await this.productSaveService.upsertProducts(products, ScrapStatus.BASIC);
 
-        if (escapeNext) {
-          escapeNext = false;
-          continue;
-        }
+      // Queue detail scraping in batches
+      const batches = this.chunkArray(products, this.BATCH_SIZE);
 
-        if (char === '\\') {
-          escapeNext = true;
-          continue;
-        }
-
-        if (char === '"') {
-          inString = !inString;
-          continue;
-        }
-
-        if (!inString) {
-          if (char === '{') braceCount++;
-          if (char === '}') braceCount--;
-
-          if (braceCount === 0) {
-            endIndex = i + 1;
-            break;
-          }
-        }
-      }
-
-      const jsonString = htmlContent.substring(jsonStart, endIndex);
-      const jsonObject = JSON.parse(jsonString);
-
-      const products = jsonObject?.searchData?.results?.products;
-
-      if (!Array.isArray(products)) {
-        this.logger.warn('No products found in Myntra data');
-        return;
-      }
-
-      this.logger.log(`Found ${products.length} products to save`);
-
-      for (const p of products) {
-        const productUrl = `https://www.myntra.com/${p.landingPageUrl}`;
-
-        await this.prisma.client.product.upsert({
-          where: { productUrl: productUrl },
-          update: {
-            title: p.productName,
-            description: p.additionalInfo,
-            brand: p.brand,
-            category: p.category,
-            price: p.price,
-            inStock: p.inventoryInfo
-              ? p.inventoryInfo.some((i: any) => i.available)
-              : true,
-            images: p.images ? p.images.map((img: any) => img.src) : [],
-            size: p.sizes ? p.sizes.split(',') : [],
-            color: p.primaryColour ? [p.primaryColour] : [],
-            lastScraped: new Date(),
-            basicScraped: true,
-          },
-          create: {
-            title: p.productName,
-            description: p.additionalInfo,
-            brand: p.brand,
-            category: p.category,
-            price: p.price,
-            retailer: 'Myntra',
-            productUrl: productUrl,
-            inStock: p.inventoryInfo
-              ? p.inventoryInfo.some((i: any) => i.available)
-              : true,
-            images: p.images ? p.images.map((img: any) => img.src) : [],
-            size: p.sizes ? p.sizes.split(',') : [],
-            color: p.primaryColour ? [p.primaryColour] : [],
-            lastScraped: new Date(),
-            basicScraped: true,
-            fullScraped: false,
-          },
-        });
-
-        // Queue Detail Scrape
-        await this.scrapeQueue.add('product-detail', {
-          jobId: `detail-myntra-${p.productId}`,
-          url: productUrl,
-          domain: 'myntra.com',
-          options: { timeout: 30000 },
+      for (const batch of batches) {
+        await this.productDetailQueue.add('scrape-detail', {
+          jobId: `detail-myntra-batch-${Date.now()}-${Math.random().toString(36).substring(7)}`,
+          products: batch.map((p) => ({
+            url: p.productUrl,
+            domain: 'myntra.com',
+            retailer: 'myntra',
+          })),
           createdAt: new Date(),
         });
       }
     } catch (e) {
       this.logger.error(`Failed to process Myntra data: ${e.message}`);
+    }
+  }
+
+  private async processMeeshoData(htmlContent: string, jobId: string) {
+    try {
+      const products = this.parserService.parseMeesho(htmlContent);
+
+      if (products.length === 0) {
+        this.logger.warn('No products found in Meesho response');
+        return;
+      }
+
+      this.logger.log(`Found ${products.length} Meesho products to save`);
+
+      // Save products with BASIC status
+      await this.productSaveService.upsertProducts(products, ScrapStatus.BASIC);
+
+      // TODO: Enable this when we have a proper proxy setup
+      // // Queue detail scraping in batches
+      // const validProducts = products.filter(
+      //   (p) => p.productUrl && !p.productUrl.includes('search?'),
+      // );
+      // const batches = this.chunkArray(validProducts, this.BATCH_SIZE);
+
+      // for (const batch of batches) {
+      //   await this.productDetailQueue.add('scrape-detail', {
+      //     jobId: `detail-meesho-batch-${Date.now()}-${Math.random().toString(36).substring(7)}`,
+      //     products: batch.map((p) => ({
+      //       url: p.productUrl,
+      //       domain: 'meesho.com',
+      //       retailer: 'meesho',
+      //     })),
+      //     createdAt: new Date(),
+      //   });
+      // }
+    } catch (e) {
+      this.logger.error(`Failed to process Meesho data: ${e.message}`);
+    }
+  }
+
+  private async processAmazonData(htmlContent: string, jobId: string) {
+    try {
+      const products = this.parserService.parseAmazon(htmlContent);
+
+      if (products.length === 0) {
+        this.logger.warn('No products found in Amazon response');
+        return;
+      }
+
+      this.logger.log(`Found ${products.length} Amazon products to save`);
+
+      // Save products with BASIC status
+      await this.productSaveService.upsertProducts(products, ScrapStatus.BASIC);
+
+      // Queue detail scraping in batches
+      const validProducts = products.filter(
+        (p) => p.productUrl && p.productUrl.includes('/dp/'),
+      );
+      const batches = this.chunkArray(validProducts, this.BATCH_SIZE);
+
+      for (const batch of batches) {
+        await this.productDetailQueue.add('scrape-detail', {
+          jobId: `detail-amazon-batch-${Date.now()}-${Math.random().toString(36).substring(7)}`,
+          products: batch.map((p) => ({
+            url: p.productUrl,
+            domain: 'amazon.in',
+            retailer: 'amazon',
+          })),
+          createdAt: new Date(),
+        });
+      }
+    } catch (e) {
+      this.logger.error(`Failed to process Amazon data: ${e.message}`);
     }
   }
 

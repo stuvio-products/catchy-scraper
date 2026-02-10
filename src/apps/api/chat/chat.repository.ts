@@ -1,16 +1,21 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '@/shared/prisma/prisma.service';
 import { Chat, Message, MessageRole, ChatState } from '@prisma/client';
+import { getEnumKeyAsType } from '@/shared/lib/util';
+
+export interface UpdateStateData {
+  currentQuery: string;
+  filters: any;
+  intentConfidence?: any;
+  mode?: string;
+}
 
 export interface CreateChatData {
   userId: string;
   initialQuery: string;
   initialFilters?: any;
-}
-
-export interface UpdateStateData {
-  currentQuery: string;
-  filters: any;
+  intentConfidence?: any;
+  mode?: string;
 }
 
 @Injectable()
@@ -26,7 +31,10 @@ export class ChatRepository {
         userId: data.userId,
         messages: {
           create: {
-            role: MessageRole.USER,
+            role: getEnumKeyAsType(
+              MessageRole,
+              MessageRole.USER,
+            ) as MessageRole,
             content: data.initialQuery,
           },
         },
@@ -34,6 +42,8 @@ export class ChatRepository {
           create: {
             currentQuery: data.initialQuery,
             filters: data.initialFilters ?? {},
+            intentConfidence: data.intentConfidence,
+            mode: data.mode ?? 'SEARCH',
           },
         },
       },
@@ -43,7 +53,9 @@ export class ChatRepository {
     });
   }
 
-  async findChatById(chatId: string): Promise<Chat & { messages: Message[], state: ChatState }> {
+  async findChatById(
+    chatId: string,
+  ): Promise<Chat & { messages: Message[]; state: ChatState }> {
     const chat = await this.prisma.client.chat.findUniqueOrThrow({
       where: { id: chatId },
       include: {
@@ -58,7 +70,7 @@ export class ChatRepository {
       throw new Error('Chat state not found');
     }
 
-    return chat as Chat & { messages: Message[], state: ChatState };
+    return chat as Chat & { messages: Message[]; state: ChatState };
   }
 
   async findChatsByUserId(userId: string): Promise<Chat[]> {
@@ -71,33 +83,47 @@ export class ChatRepository {
     });
   }
 
-  async addMessage(chatId: string, role: MessageRole, content: string): Promise<Message> {
+  async addMessage(
+    chatId: string,
+    role: MessageRole,
+    content: string,
+  ): Promise<Message> {
     return this.prisma.client.message.create({
       data: {
         chatId,
-        role,
+        role: getEnumKeyAsType(MessageRole, role) as MessageRole,
         content,
       },
     });
   }
 
-  async updateChatState(chatId: string, data: UpdateStateData): Promise<ChatState> {
+  async updateChatState(
+    chatId: string,
+    data: UpdateStateData,
+  ): Promise<ChatState> {
     return this.prisma.client.chatState.update({
       where: { chatId },
       data: {
         currentQuery: data.currentQuery,
         filters: data.filters,
+        intentConfidence: data.intentConfidence,
+        mode: data.mode,
       },
     });
   }
 
   async findChatState(chatId: string): Promise<ChatState> {
-    return this.prisma.client.chatState.findUniqueOrThrow({ where: { chatId } });
+    return this.prisma.client.chatState.findUniqueOrThrow({
+      where: { chatId },
+    });
   }
 
-  async updateChatStateEmbedding(chatId: string, embedding: number[]): Promise<void> {
+  async updateChatStateEmbedding(
+    chatId: string,
+    embedding: number[],
+  ): Promise<void> {
     const vectorString = `[${embedding.join(',')}]`;
-    
+
     await this.prisma.client.$executeRaw`
       UPDATE chat_state
       SET last_embedding = ${vectorString}::vector

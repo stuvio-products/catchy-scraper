@@ -19,6 +19,11 @@ enum LoginType {
   GOOGLE   @map("Google")
 }
 
+enum ScrapStatus {
+  BASIC    @map("basic")
+  DETAILED @map("detailed")
+}
+
 model User {
   id String @id @default(uuid())
 
@@ -74,8 +79,7 @@ model Product {
   productUrl   String?                      @unique @map("product_url")
   images       String[] // array of URLs
   inStock      Boolean                      @default(true) @map("in_stock")
-  basicScraped Boolean                      @default(true) @map("basic_scraped")
-  fullScraped  Boolean                      @default(false) @map("full_scraped")
+  scrapStatus  ScrapStatus                  @default(BASIC) @map("scrap_status")
   lastScraped  DateTime?                    @map("last_scraped")
   embedding    Unsupported("vector(1536)")?
   createdAt    DateTime                     @default(now()) @map("created_at")
@@ -87,8 +91,7 @@ model Product {
   @@index([retailer])
   @@index([price])
   @@index([inStock])
-  @@index([basicScraped])
-  @@index([fullScraped])
+  @@index([scrapStatus])
   @@map("products")
 }
 
@@ -123,10 +126,13 @@ model Message {
 }
 
 model ChatState {
-  chatId        String                       @id @map("chat_id") @db.Uuid
-  currentQuery  String?                      @map("current_query")
-  filters       Json?
-  lastEmbedding Unsupported("vector(1536)")? @map("last_embedding")
+  chatId          String                       @id @map("chat_id") @db.Uuid
+  currentQuery    String?                      @map("current_query")
+  filters         Json?
+  intentConfidence Json?                       @map("intent_confidence")
+  mode            String?                      @default("SEARCH")
+  lastCursorScore Float?                       @map("last_cursor_score")
+  lastEmbedding   Unsupported("vector(1536)")? @map("last_embedding")
 
   chat Chat @relation(fields: [chatId], references: [id], onDelete: Cascade)
 
