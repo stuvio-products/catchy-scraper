@@ -60,7 +60,9 @@ export class AuthService {
     const id = uuidv4();
 
     if (!username) {
-      username = `catchy-${id}`;
+      username = `catchy-${firstName.toLowerCase()}-${lastName.toLowerCase()}-${Math.random()
+        .toString(36)
+        .substring(7)}`;
     }
 
     // Create the user
