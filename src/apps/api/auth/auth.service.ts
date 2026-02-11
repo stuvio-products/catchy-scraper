@@ -16,6 +16,7 @@ import { ResetForgottenPasswordDto } from './dto/reset-forgotten-password.dto';
 import { OtpService } from './otp/otp.service';
 import { OtpType } from '@prisma/client';
 import { MailService } from '@/shared/mail/mail.service';
+import { UserLogsRepository } from '@/shared/user-logs/user-logs.repository';
 
 @Injectable()
 export class AuthService {
@@ -26,10 +27,12 @@ export class AuthService {
     private readonly authMapper: AuthMapper,
     private readonly otpService: OtpService,
     private readonly mailService: MailService,
+    private readonly userLogsRepository: UserLogsRepository,
   ) {}
 
-  async signup(signupDto: SignupDto) {
+  async signup(signupDto: SignupDto, ipAddress?: string) {
     const { email, password, firstName, lastName } = signupDto;
+    let { username } = signupDto;
 
     // Check if user already exists
     const existingUser = await this.usersRepository.findByEmail(email);
@@ -37,21 +40,55 @@ export class AuthService {
       throw new ConflictException('User with this email already exists');
     }
 
+    if (username) {
+      const existingUsername = await this.usersRepository.findByUsername(username);
+      if (existingUsername) {
+        throw new ConflictException('Username is already taken');
+      }
+    } else {
+      // Generate username if not provided
+      // For now we will use a UUID, but we will replace it with a more readable random string later if needed
+      // Since we need to know the ID for the username pattern "catchy-{userId}", we will generate the ID first
+      // But wait, "catchy-{userId}" might be too long.
+      // Requirements: "if user dont provide it, keep user id as username like this - catchy-userid"
+      // So calculate ID first, then set username.
+    }
+
     // Hash the password
     const passwordHash = await bcrypt.hash(password, this.SALT_ROUNDS);
 
+    // Generate ID
+    const { v4: uuidv4 } = require('uuid');
+    const id = uuidv4();
+
+    if (!username) {
+      username = `catchy-${firstName.toLowerCase()}-${lastName.toLowerCase()}-${Math.random()
+        .toString(36)
+        .substring(7)}`;
+    }
+
     // Create the user
     const user = await this.usersRepository.create({
+      id,
       email,
+      username,
       passwordHash,
       firstName,
       lastName,
     });
 
+    // Log the signup action
+    await this.userLogsRepository.createLog({
+      userId: user.id,
+      action: 'SIGNUP',
+      ipAddress,
+      details: { email: user.email },
+    });
+
     return this.authMapper.toAuthResponse(user);
   }
 
-  async login(loginDto: LoginDto) {
+  async login(loginDto: LoginDto, ipAddress?: string) {
     const { email, password } = loginDto;
 
     // Find user by email
@@ -76,6 +113,14 @@ export class AuthService {
     if (!isPasswordValid) {
       throw new UnauthorizedException('Invalid credentials');
     }
+
+    // Log the login action
+    await this.userLogsRepository.createLog({
+      userId: user.id,
+      action: 'LOGIN',
+      ipAddress,
+      details: { email: user.email },
+    });
 
     return this.authMapper.toAuthResponse(user);
   }

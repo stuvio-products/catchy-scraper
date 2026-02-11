@@ -10,6 +10,7 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { UsersRepository } from '@/shared/users-service/users.repository';
+import { UserLogsRepository } from '@/shared/user-logs/user-logs.repository';
 import { JwtAuthGuard } from '@/apps/api/auth/guards/jwt-auth.guard';
 import { CurrentUser } from '@/apps/api/auth/decorators/current-user.decorator';
 import { CreateUserStyleProfileDto } from '@/shared/users-service/dto/create-user-style-profile.dto';
@@ -22,6 +23,7 @@ export class UsersController {
   constructor(
     private readonly usersRepository: UsersRepository,
     private readonly userMapper: UserMapper,
+    private readonly userLogsRepository: UserLogsRepository,
   ) {}
 
   @Delete('me')
@@ -44,6 +46,15 @@ export class UsersController {
       }
     }
 
+    if (body.username && body.username !== user.username) {
+      const existingUsername = await this.usersRepository.findByUsername(
+        body.username,
+      );
+      if (existingUsername) {
+        throw new ConflictException('Username already in use');
+      }
+    }
+
     const updatedUser = await this.usersRepository.update(user.id, body);
     return this.userMapper.toDto(updatedUser);
   }
@@ -60,7 +71,7 @@ export class UsersController {
       user.id,
       body,
     );
-    return this.userMapper.toStyleProfileDto(styleProfile);
+    return this.userMapper.toStyleProfileDto(user.username, styleProfile);
   }
 
   @Get('me/style-profile')
@@ -70,7 +81,7 @@ export class UsersController {
       user.id,
     );
     return styleProfile
-      ? this.userMapper.toStyleProfileDto(styleProfile)
+      ? this.userMapper.toStyleProfileDto(user.username, styleProfile)
       : null;
   }
 
@@ -83,5 +94,11 @@ export class UsersController {
     return userWithProfile
       ? this.userMapper.toWithStyleProfileDto(userWithProfile)
       : null;
+  }
+
+  @Get('me/logs')
+  @UseGuards(JwtAuthGuard)
+  async getMyLogs(@CurrentUser() user: User) {
+    return this.userLogsRepository.findByUserId(user.id);
   }
 }

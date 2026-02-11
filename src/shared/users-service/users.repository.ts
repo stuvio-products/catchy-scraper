@@ -33,15 +33,25 @@ export class UsersRepository {
     });
   }
 
+  async findByUsername(username: string): Promise<User | null> {
+    return this.prisma.client.user.findUnique({
+      where: { username },
+    });
+  }
+
   async create(data: {
+    id: string;
     email: string;
+    username: string;
     passwordHash: string;
     firstName: string;
     lastName: string;
   }): Promise<User> {
     return this.prisma.client.user.create({
       data: {
+        id: data.id,
         email: data.email,
+        username: data.username,
         passwordHash: data.passwordHash,
         firstName: data.firstName,
         lastName: data.lastName,

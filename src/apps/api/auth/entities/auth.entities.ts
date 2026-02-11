@@ -14,8 +14,12 @@ export class GoogleResponse {
 export class AuthenticatedUser {
   id: string;
   email: string;
+  username: string;
   firstName: string;
   lastName: string;
+  bio: string | null;
+  phone: string | null;
+  profileImage: string | null;
   createdAt: Date;
 }
 
@@ -26,5 +30,13 @@ export class UserWithToken {
 
 export type RequestUser = Pick<
   User,
-  'id' | 'email' | 'firstName' | 'lastName' | 'createdAt'
+  'id' |
+    'email' |
+    'username' |
+    'firstName' |
+    'lastName' |
+    'bio' |
+    'phone' |
+    'profileImage' |
+    'createdAt'
 >;

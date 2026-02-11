@@ -11,8 +11,12 @@ export class AuthMapper {
     return {
       id: user.id,
       email: user.email,
+      username: user.username,
       firstName: user.firstName,
       lastName: user.lastName,
+      bio: user.bio,
+      phone: user.phone,
+      profileImage: user.profileImage,
       createdAt: user.createdAt,
     };
   }
