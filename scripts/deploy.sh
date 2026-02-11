@@ -328,6 +328,43 @@ deploy_application() {
     done
     log "✅ Database is healthy"
 
+    # ── Ensure DB User/DB Exists (Self-Healing for persistent volumes) ──
+    ensure_db_setup() {
+        log "Verifying database user and name..."
+        
+        # Load env vars to get desired credentials
+        if [ -f "$APP_DIR/.env" ]; then
+            export $(grep -v '^#' "$APP_DIR/.env" | xargs)
+        fi
+        
+        local db_container="catchy-postgres"
+        local desired_user="${POSTGRES_USER:-catchy_admin}"
+        local desired_pass="${POSTGRES_PASSWORD:-C@tchy_Pr0d_2026!xK9m}"
+        local desired_db="${POSTGRES_DB:-catchy_production}"
+
+        # Check User
+        if ! docker exec -u postgres "$db_container" psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='$desired_user'" | grep -q 1; then
+            log_warn "User '$desired_user' does not exist (old volume?). Creating..."
+            docker exec -u postgres "$db_container" psql -c "CREATE USER $desired_user WITH PASSWORD '$desired_pass' SUPERUSER;" || log_error "Failed to create user"
+            log "✅ User '$desired_user' created"
+        else
+            log "✅ User '$desired_user' exists"
+            # verify password match? Checking password hash is complex, assuming correct if exists, 
+            # or could ALTER USER to ensure password sync.
+            docker exec -u postgres "$db_container" psql -c "ALTER USER $desired_user WITH PASSWORD '$desired_pass';" >/dev/null 2>&1
+        fi
+
+        # Check DB
+        if ! docker exec -u postgres "$db_container" psql -tAc "SELECT 1 FROM pg_database WHERE datname='$desired_db'" | grep -q 1; then
+             log_warn "Database '$desired_db' does not exist. Creating..."
+             docker exec -u postgres "$db_container" psql -c "CREATE DATABASE $desired_db OWNER $desired_user;" || log_error "Failed to create DB"
+             log "✅ Database '$desired_db' created"
+        else
+             log "✅ Database '$desired_db' exists"
+        fi
+    }
+    ensure_db_setup || log_warn "DB verification failed, proceeding anyway..."
+
     # Wait for DB Replica
     log "Waiting for database replica to be healthy..."
     local replica_wait=0

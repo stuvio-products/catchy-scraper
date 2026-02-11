@@ -59,6 +59,41 @@ done
 echo ""
 log "✅ Primary DB is healthy"
 
+# ── Ensure DB User/DB Exists (Self-Healing) ──
+ensure_db_setup() {
+    log "Verifying database user and name..."
+    
+    # Load env vars to get desired credentials
+    if [ -f ".env" ]; then
+        export $(grep -v '^#' ".env" | xargs)
+    fi
+    
+    local db_container="catchy-postgres"
+    local desired_user="${POSTGRES_USER:-catchy_admin}"
+    local desired_pass="${POSTGRES_PASSWORD:-C@tchy_Pr0d_2026!xK9m}"
+    local desired_db="${POSTGRES_DB:-catchy_production}"
+
+    # Check User
+    if ! docker exec -u postgres "$db_container" psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='$desired_user'" | grep -q 1; then
+        warn "User '$desired_user' does not exist. Creating..."
+        docker exec -u postgres "$db_container" psql -c "CREATE USER $desired_user WITH PASSWORD '$desired_pass' SUPERUSER;" || error "Failed to create user"
+        log "✅ User '$desired_user' created"
+    else
+        log "✅ User '$desired_user' exists"
+        docker exec -u postgres "$db_container" psql -c "ALTER USER $desired_user WITH PASSWORD '$desired_pass';" >/dev/null 2>&1
+    fi
+
+    # Check DB
+    if ! docker exec -u postgres "$db_container" psql -tAc "SELECT 1 FROM pg_database WHERE datname='$desired_db'" | grep -q 1; then
+         warn "Database '$desired_db' does not exist. Creating..."
+         docker exec -u postgres "$db_container" psql -c "CREATE DATABASE $desired_db OWNER $desired_user;" || error "Failed to create DB"
+         log "✅ Database '$desired_db' created"
+    else
+         log "✅ Database '$desired_db' exists"
+    fi
+}
+ensure_db_setup || warn "DB verification failed, proceeding anyway..."
+
 # ─── 4. Start Replica ────────────────────────────────────────────────────────
 if grep -q "db-replica:" "$COMPOSE_FILE"; then
     log "Starting Database Replica..."
