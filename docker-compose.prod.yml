@@ -49,6 +49,7 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: 6379
       DATABASE_URL: postgresql://catchy_admin:C@tchy_Pr0d_2026!xK9m@db:5432/catchy_production?schema=public
+      DATABASE_REPLICA_URL: postgresql://catchy_admin:C@tchy_Pr0d_2026!xK9m@db:5432/catchy_production?schema=public
       API_PORT: 3000
     depends_on:
       db:
@@ -81,6 +82,7 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: 6379
       DATABASE_URL: postgresql://catchy_admin:C@tchy_Pr0d_2026!xK9m@db:5432/catchy_production?schema=public
+      DATABASE_REPLICA_URL: postgresql://catchy_admin:C@tchy_Pr0d_2026!xK9m@db:5432/catchy_production?schema=public
       WORKER_CONCURRENCY: 8
     depends_on:
       db:
