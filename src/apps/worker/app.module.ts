@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { BullModule } from '@nestjs/bullmq';
 import { CacheModule } from '@nestjs/cache-manager';
+import { ScheduleModule } from '@nestjs/schedule';
 import { redisStore } from 'cache-manager-redis-yet';
 import { validationSchema } from '../../shared/config/env.validation';
 import { QUEUE_NAMES } from '../../shared/queue/queue.constants';
@@ -28,6 +29,7 @@ import { PrismaModule } from '@/shared/prisma/prisma.module';
         }),
       }),
     }),
+    ScheduleModule.forRoot(),
     BullModule.forRootAsync({
       imports: [ConfigModule],
       useFactory: (configService: ConfigService) => ({

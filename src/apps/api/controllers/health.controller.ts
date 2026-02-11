@@ -14,16 +14,18 @@ export class HealthController {
 
   @Get()
   async getHealth() {
-    const queueHealth = await this.getQueueHealth();
-
     return {
       status: 'ok',
       timestamp: new Date().toISOString(),
-      service: 'api',
+      service: {
+        api: true,
+        queue: (await this.getQueueHealth()).status === 'connected',
+      },
     };
   }
 
-  private async getQueueHealth() {
+  @Get('queue')
+  async getQueueHealth() {
     try {
       const counts = await this.scrapeQueue.getJobCounts();
       return {
