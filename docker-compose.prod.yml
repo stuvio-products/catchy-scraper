@@ -116,5 +116,4 @@ volumes:
 
 networks:
   catchy-network:
-    name: catchy-network
-    driver: bridge
+    external: true
