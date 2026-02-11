@@ -117,6 +117,23 @@ update_repository() {
 
     # Clone if needed
     if [ ! -d "$APP_DIR/.git" ]; then
+        log "No .git directory found in $APP_DIR"
+
+        # If directory exists but is not a git repo, clean it first
+        if [ -d "$APP_DIR" ]; then
+            log_warn "Directory $APP_DIR exists but is not a git repository"
+            
+            # Backup .env if it exists (preserve secrets)
+            if [ -f "$APP_DIR/.env" ]; then
+                log "Backing up .env file..."
+                cp "$APP_DIR/.env" /tmp/catchy-backend-env.bak
+            fi
+
+            # Remove existing directory contents to allow fresh clone
+            log "Clearing existing directory for fresh clone..."
+            rm -rf "$APP_DIR"
+        fi
+
         log "Cloning repository..."
         cd /var/www
 
@@ -148,6 +165,14 @@ update_repository() {
         fi
 
         cd "$APP_DIR"
+
+        # Restore .env if it was backed up
+        if [ -f /tmp/catchy-backend-env.bak ]; then
+            log "Restoring .env file..."
+            cp /tmp/catchy-backend-env.bak "$APP_DIR/.env"
+            rm -f /tmp/catchy-backend-env.bak
+        fi
+
         log "✅ Repository cloned: $(git rev-parse --short HEAD)"
     fi
 
