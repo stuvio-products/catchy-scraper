@@ -51,6 +51,7 @@ services:
       DATABASE_URL: postgresql://catchy_admin:C@tchy_Pr0d_2026!xK9m@db:5432/catchy_production?schema=public
       DATABASE_REPLICA_URL: postgresql://catchy_admin:C@tchy_Pr0d_2026!xK9m@db:5432/catchy_production?schema=public
       API_PORT: 3000
+      BROWSER_COUNT: 0
     depends_on:
       db:
         condition: service_healthy
@@ -84,6 +85,7 @@ services:
       DATABASE_URL: postgresql://catchy_admin:C@tchy_Pr0d_2026!xK9m@db:5432/catchy_production?schema=public
       DATABASE_REPLICA_URL: postgresql://catchy_admin:C@tchy_Pr0d_2026!xK9m@db:5432/catchy_production?schema=public
       WORKER_CONCURRENCY: 8
+      BROWSER_COUNT: 0
     depends_on:
       db:
         condition: service_healthy
