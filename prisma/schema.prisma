@@ -44,6 +44,22 @@ model User {
   profileImage String? @map("profile_image")
 
   isDeleted Boolean @default(false) @map("is_deleted")
+
+  logs UserLog[]
+}
+
+model UserLog {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  action    String
+  ipAddress String?  @map("ip_address")
+  details   Json?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("user_logs")
 }
 
 model UserStyleProfile {

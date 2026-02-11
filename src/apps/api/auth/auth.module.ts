@@ -9,6 +9,7 @@ import { AuthMapper } from './auth.mapper';
 import { UsersModule } from '@/shared/users-service/users.module';
 import { OtpService } from './otp/otp.service';
 import { PrismaModule } from '@/shared/prisma/prisma.module';
+import { UserLogsModule } from '@/shared/user-logs/user-logs.module';
 
 @Module({
   imports: [
@@ -23,6 +24,7 @@ import { PrismaModule } from '@/shared/prisma/prisma.module';
     }),
     UsersModule,
     PrismaModule,
+    UserLogsModule,
   ],
   controllers: [AuthController],
   providers: [AuthService, AuthMapper, JwtStrategy, OtpService],

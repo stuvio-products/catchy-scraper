@@ -16,6 +16,7 @@ import { ResetForgottenPasswordDto } from './dto/reset-forgotten-password.dto';
 import { OtpService } from './otp/otp.service';
 import { OtpType } from '@prisma/client';
 import { MailService } from '@/shared/mail/mail.service';
+import { UserLogsRepository } from '@/shared/user-logs/user-logs.repository';
 
 @Injectable()
 export class AuthService {
@@ -26,9 +27,10 @@ export class AuthService {
     private readonly authMapper: AuthMapper,
     private readonly otpService: OtpService,
     private readonly mailService: MailService,
+    private readonly userLogsRepository: UserLogsRepository,
   ) {}
 
-  async signup(signupDto: SignupDto) {
+  async signup(signupDto: SignupDto, ipAddress?: string) {
     const { email, password, firstName, lastName } = signupDto;
     let { username } = signupDto;
 
@@ -75,10 +77,18 @@ export class AuthService {
       lastName,
     });
 
+    // Log the signup action
+    await this.userLogsRepository.createLog({
+      userId: user.id,
+      action: 'SIGNUP',
+      ipAddress,
+      details: { email: user.email },
+    });
+
     return this.authMapper.toAuthResponse(user);
   }
 
-  async login(loginDto: LoginDto) {
+  async login(loginDto: LoginDto, ipAddress?: string) {
     const { email, password } = loginDto;
 
     // Find user by email
@@ -103,6 +113,14 @@ export class AuthService {
     if (!isPasswordValid) {
       throw new UnauthorizedException('Invalid credentials');
     }
+
+    // Log the login action
+    await this.userLogsRepository.createLog({
+      userId: user.id,
+      action: 'LOGIN',
+      ipAddress,
+      details: { email: user.email },
+    });
 
     return this.authMapper.toAuthResponse(user);
   }
