@@ -283,6 +283,18 @@ deploy_application() {
 
     mkdir -p "$APP_DIR/logs"
 
+    # ── Ensure .env exists ──
+    if [ ! -f "$APP_DIR/.env" ]; then
+        if [ -f "$APP_DIR/.env.example" ]; then
+            log_warn ".env file not found — copying from .env.example..."
+            cp "$APP_DIR/.env.example" "$APP_DIR/.env"
+            log "✅ .env file created from .env.example — update secrets on the VPS"
+        else
+            log_error ".env and .env.example both missing — cannot continue"
+            return 1
+        fi
+    fi
+
     local active_slot=$(get_active_slot)
     local new_slot=$(get_inactive_slot)
     local new_port=$(get_slot_port "$new_slot")
@@ -366,10 +378,15 @@ deploy_application() {
 
     # Start new container with port mapping to the new slot port
     # Connect to catchy-network so it can reach db/redis by service name
+    local env_file_flag=""
+    if [ -f "$APP_DIR/.env" ]; then
+        env_file_flag="--env-file $APP_DIR/.env"
+    fi
+
     docker run -d \
         --name "catchy-api-${new_slot}" \
         --network "$NETWORK_NAME" \
-        --env-file .env \
+        $env_file_flag \
         -e NODE_ENV=production \
         -e API_PORT=${INTERNAL_PORT} \
         -e REDIS_HOST=catchy-redis \
