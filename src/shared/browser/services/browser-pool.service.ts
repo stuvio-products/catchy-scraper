@@ -52,13 +52,20 @@ export class BrowserPoolService implements OnModuleInit, OnModuleDestroy {
       `Initializing browser pool with ${this.browserCount} browsers (headless: ${this.headless})`,
     );
 
-    for (let i = 0; i < this.browserCount; i++) {
-      await this.launchBrowser();
-    }
+    try {
+      for (let i = 0; i < this.browserCount; i++) {
+        await this.launchBrowser();
+      }
 
-    this.logger.log(
-      `Browser pool initialized with ${this.browsers.size} browsers`,
-    );
+      this.logger.log(
+        `Browser pool initialized with ${this.browsers.size} browsers`,
+      );
+    } catch (error) {
+      this.logger.warn(
+        `Browser pool initialization failed: ${error.message}. ` +
+          `The API will run without local browsers — use browser-service instead.`,
+      );
+    }
   }
 
   async onModuleDestroy() {

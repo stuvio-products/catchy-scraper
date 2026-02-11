@@ -22,32 +22,10 @@ RUN npx prisma generate
 # Build application
 RUN npm run build:api
 
-# Production stage — use slim (not alpine) for Playwright compatibility
-FROM node:20-slim
+# Production stage
+FROM node:20-alpine
 
 WORKDIR /app
-
-# Install Playwright system dependencies (Chromium needs these libs)
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    wget \
-    ca-certificates \
-    fonts-liberation \
-    libasound2 \
-    libatk-bridge2.0-0 \
-    libatk1.0-0 \
-    libcups2 \
-    libdbus-1-3 \
-    libdrm2 \
-    libgbm1 \
-    libgtk-3-0 \
-    libnspr4 \
-    libnss3 \
-    libx11-xcb1 \
-    libxcomposite1 \
-    libxdamage1 \
-    libxrandr2 \
-    xdg-utils \
-    && rm -rf /var/lib/apt/lists/*
 
 # Copy built application
 COPY --from=build /app/dist ./dist
@@ -62,9 +40,6 @@ RUN npm ci --omit=dev
 
 # Re-generate prisma client for production
 RUN npx prisma generate
-
-# Install Playwright Chromium browser
-RUN npx playwright install chromium
 
 # Expose API port
 EXPOSE 3000
