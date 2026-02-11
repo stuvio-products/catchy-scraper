@@ -1,11 +1,9 @@
 import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Job, Queue } from 'bullmq';
-import { InjectQueue } from '@nestjs/bullmq';
+import { Job } from 'bullmq';
 import { QUEUE_NAMES } from '@/shared/queue/queue.constants';
 import { ScrapeJob } from '@/shared/queue/interfaces/scrape-job.interface';
-import { ProductDetailJob } from '@/shared/queue/interfaces/product-detail-job.interface';
 import { ScrapeOrchestratorService } from '@/shared/scraping/services/scrape-orchestrator.service';
 import { ParserService } from '@/shared/scraping/services/parser.service';
 import { ProductSaveService } from '@/shared/scraping/services/product-save.service';
@@ -21,8 +19,6 @@ export class ScrapeProcessor extends WorkerHost {
     private readonly configService: ConfigService,
     private readonly parserService: ParserService,
     private readonly productSaveService: ProductSaveService,
-    @InjectQueue(QUEUE_NAMES.PRODUCT_DETAIL_QUEUE)
-    private productDetailQueue: Queue<ProductDetailJob>,
   ) {
     super();
     this.concurrency =
@@ -109,26 +105,8 @@ export class ScrapeProcessor extends WorkerHost {
       const products = this.parserService.parseFlipkart(htmlContent);
       this.logger.log(`Found ${products.length} Flipkart products to save`);
 
-      // Save products with BASIC status
+      // Save products with BASIC status only — detail scraping is click-triggered
       await this.productSaveService.upsertProducts(products, ScrapStatus.BASIC);
-
-      // Queue detail scraping in batches
-      const validProducts = products.filter(
-        (p) => p.productUrl && !p.productUrl.includes('search?'),
-      );
-      const batches = this.chunkArray(validProducts, this.BATCH_SIZE);
-
-      for (const batch of batches) {
-        await this.productDetailQueue.add('scrape-detail', {
-          jobId: `detail-flipkart-batch-${Date.now()}-${Math.random().toString(36).substring(7)}`,
-          products: batch.map((p) => ({
-            url: p.productUrl,
-            domain: 'flipkart.com',
-            retailer: 'flipkart',
-          })),
-          createdAt: new Date(),
-        });
-      }
     } catch (e) {
       this.logger.error(`Failed to process Flipkart data: ${e.message}`);
     }
@@ -145,23 +123,8 @@ export class ScrapeProcessor extends WorkerHost {
 
       this.logger.log(`Found ${products.length} Myntra products to save`);
 
-      // Save products with BASIC status
+      // Save products with BASIC status only — detail scraping is click-triggered
       await this.productSaveService.upsertProducts(products, ScrapStatus.BASIC);
-
-      // Queue detail scraping in batches
-      const batches = this.chunkArray(products, this.BATCH_SIZE);
-
-      for (const batch of batches) {
-        await this.productDetailQueue.add('scrape-detail', {
-          jobId: `detail-myntra-batch-${Date.now()}-${Math.random().toString(36).substring(7)}`,
-          products: batch.map((p) => ({
-            url: p.productUrl,
-            domain: 'myntra.com',
-            retailer: 'myntra',
-          })),
-          createdAt: new Date(),
-        });
-      }
     } catch (e) {
       this.logger.error(`Failed to process Myntra data: ${e.message}`);
     }
@@ -215,26 +178,8 @@ export class ScrapeProcessor extends WorkerHost {
 
       this.logger.log(`Found ${products.length} Amazon products to save`);
 
-      // Save products with BASIC status
+      // Save products with BASIC status only — detail scraping is click-triggered
       await this.productSaveService.upsertProducts(products, ScrapStatus.BASIC);
-
-      // Queue detail scraping in batches
-      const validProducts = products.filter(
-        (p) => p.productUrl && p.productUrl.includes('/dp/'),
-      );
-      const batches = this.chunkArray(validProducts, this.BATCH_SIZE);
-
-      for (const batch of batches) {
-        await this.productDetailQueue.add('scrape-detail', {
-          jobId: `detail-amazon-batch-${Date.now()}-${Math.random().toString(36).substring(7)}`,
-          products: batch.map((p) => ({
-            url: p.productUrl,
-            domain: 'amazon.in',
-            retailer: 'amazon',
-          })),
-          createdAt: new Date(),
-        });
-      }
     } catch (e) {
       this.logger.error(`Failed to process Amazon data: ${e.message}`);
     }

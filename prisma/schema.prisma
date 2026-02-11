@@ -24,6 +24,12 @@ enum ScrapStatus {
   DETAILED @map("detailed")
 }
 
+enum ScrapeState {
+  IDLE        @map("idle")
+  IN_PROGRESS @map("in_progress")
+  FAILED      @map("failed")
+}
+
 model User {
   id String @id @default(uuid())
 
@@ -80,7 +86,10 @@ model Product {
   images       String[] // array of URLs
   inStock      Boolean                      @default(true) @map("in_stock")
   scrapStatus  ScrapStatus                  @default(BASIC) @map("scrap_status")
+  scrapeState  ScrapeState                  @default(IDLE) @map("scrape_state")
   lastScraped  DateTime?                    @map("last_scraped")
+  lastDetailedScrapedAt DateTime?           @map("last_detailed_scraped_at")
+  lastScrapeAttemptAt   DateTime?           @map("last_scrape_attempt_at")
   embedding    Unsupported("vector(1536)")?
   createdAt    DateTime                     @default(now()) @map("created_at")
   updatedAt    DateTime                     @updatedAt @map("updated_at")

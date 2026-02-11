@@ -1,6 +1,8 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { BullModule } from '@nestjs/bullmq';
+import { CacheModule } from '@nestjs/cache-manager';
+import { redisStore } from 'cache-manager-redis-yet';
 import { validationSchema } from '../../shared/config/env.validation';
 import { QUEUE_NAMES } from '../../shared/queue/queue.constants';
 import { ScrapingModule } from '../../shared/scraping/scraping.module';
@@ -14,6 +16,17 @@ import { PrismaModule } from '@/shared/prisma/prisma.module';
       isGlobal: true,
       validationSchema,
       envFilePath: '.env',
+    }),
+    CacheModule.registerAsync({
+      isGlobal: true,
+      useFactory: async () => ({
+        store: await redisStore({
+          socket: {
+            host: process.env.REDIS_HOST || 'localhost',
+            port: parseInt(process.env.REDIS_PORT ?? '6379'),
+          },
+        }),
+      }),
     }),
     BullModule.forRootAsync({
       imports: [ConfigModule],

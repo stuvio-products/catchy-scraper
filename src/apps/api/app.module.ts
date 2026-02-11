@@ -20,6 +20,7 @@ import { UsersModule } from './users/users.module';
 import { MailModule } from '@/shared/mail/mail.module';
 import { ChatModule } from './chat/chat.module'; // Re-enabled
 import { SearchModule } from './search/search.module';
+import { ProductViewModule } from './product-view/product-view.module';
 
 @Module({
   imports: [
@@ -62,6 +63,7 @@ import { SearchModule } from './search/search.module';
     MailModule,
     ChatModule, // Re-enabled (search features stubbed)
     SearchModule,
+    ProductViewModule,
   ],
   controllers: [ScrapeController, HealthController],
   providers: [],

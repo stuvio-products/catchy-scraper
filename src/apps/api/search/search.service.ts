@@ -3,7 +3,6 @@ import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { QUEUE_NAMES, JOB_PRIORITIES } from '@/shared/queue/queue.constants';
 import { ScrapeJob } from '@/shared/queue/interfaces/scrape-job.interface';
-import { ProductDetailJob } from '@/shared/queue/interfaces/product-detail-job.interface';
 import { Logger } from '@nestjs/common';
 import { FetchScraper } from '@/shared/scraping/scrapers/fetch.scraper';
 import { PrismaService } from '@/shared/prisma/prisma.service';
@@ -170,8 +169,6 @@ export class SearchService implements OnModuleInit {
   constructor(
     @InjectQueue(QUEUE_NAMES.SCRAPE_QUEUE)
     private scrapeQueue: Queue<ScrapeJob>,
-    @InjectQueue(QUEUE_NAMES.PRODUCT_DETAIL_QUEUE)
-    private productDetailQueue: Queue<ProductDetailJob>,
     private readonly fetchScraper: FetchScraper,
     private readonly prisma: PrismaService,
     private readonly geminiService: GeminiService,
@@ -216,7 +213,7 @@ export class SearchService implements OnModuleInit {
     // 3. Create Chat Session
     const chat = await this.chatService.createChat(
       userId,
-      intent.normalizedQuery,
+      query,
       finalFilters,
       intent.confidence,
       'SEARCH',
@@ -396,38 +393,25 @@ export class SearchService implements OnModuleInit {
         ? { score: lastResult.similarity, id: String(lastResult.id) }
         : null;
 
-    if (paginatedProducts.length > 0) {
-      if (isFirstPage) {
-        // Trigger synchronous live enrichment for top N results on the first page
-        // This ensures the user sees fresh prices/availability immediately
-        paginatedProducts =
-          await this.liveFetchProductDetails(paginatedProducts);
-      }
-
-      // Queue lazy detail scraping for all returned products (background)
-      this.queueLazyDetailScraping(paginatedProducts).catch((err) =>
-        this.logger.error(`Lazy scrape error: ${err.message}`),
-      );
-    } else if (isFirstPage) {
+    if (paginatedProducts.length === 0 && isFirstPage) {
       // Fallback: If DB is empty on first page, strictly trigger Live Search
       this.logger.log(
         `No products found via state search. Triggering live scrape fallback.`,
       );
 
-      // Perform live scraping from external sources
+      // Perform live scraping from external sources (BASIC only)
       const allProducts = await this.scrapeLiveAndPersist(query);
 
       // Return the newly scraped products (respecting limit)
       const sliced = allProducts.slice(0, limit);
-      const enriched = await this.liveFetchProductDetails(sliced);
-      const last = enriched[enriched.length - 1];
+      const last = sliced[sliced.length - 1];
 
       return {
-        products: enriched,
+        products: sliced,
         total: allProducts.length,
         nextCursor:
           allProducts.length > limit && last
-            ? { score: 0.99, id: String(last.id) } // Artificial high score for fresh items
+            ? { score: 0.99, id: String(last.id) }
             : null,
         hasMore: allProducts.length > limit,
         limit,
@@ -500,11 +484,6 @@ export class SearchService implements OnModuleInit {
         ORDER BY embedding <=> ${vectorString}::vector ASC
         LIMIT 20
      `;
-
-    // Queue detail scraping
-    this.queueLazyDetailScraping(result as any).catch((e) =>
-      this.logger.error(e),
-    );
   }
 
   // ==========================================================================
@@ -770,308 +749,6 @@ export class SearchService implements OnModuleInit {
     }
   }
 
-  /**
-   * Queue product details for scraping in batches with configurable priority
-   */
-  private async enqueueProductDetailJobs(
-    items: { url: string; retailer: string }[],
-    priority: number = JOB_PRIORITIES.LAZY_DETAIL,
-  ): Promise<void> {
-    if (items.length === 0) return;
-
-    // Filter valid URLs
-    const validItems = items.filter((item) => {
-      if (!this.isValidUrl(item.url)) {
-        this.logger.warn(`Invalid product URL skipped: ${item.url}`);
-        return false;
-      }
-      return true;
-    });
-
-    if (validItems.length === 0) return;
-
-    // Create batches
-    const batches: (typeof validItems)[] = [];
-    for (
-      let i = 0;
-      i < validItems.length;
-      i += SEARCH_CONSTANTS.PRODUCT_BATCH_SIZE
-    ) {
-      batches.push(
-        validItems.slice(i, i + SEARCH_CONSTANTS.PRODUCT_BATCH_SIZE),
-      );
-    }
-
-    // Enqueue all batches with priority
-    const jobPromises = batches.map((batch) =>
-      this.productDetailQueue
-        .add(
-          'scrape-detail',
-          {
-            jobId: `detail-${randomUUID()}`,
-            products: batch.map((item) => ({
-              url: item.url,
-              domain: this.extractDomain(item.url)!,
-              retailer: item.retailer.toLowerCase() as any,
-            })),
-            createdAt: new Date(),
-          },
-          { priority },
-        )
-        .catch((err) => {
-          this.logger.error(
-            `Failed to queue product detail batch: ${err.message}`,
-            err.stack,
-          );
-        }),
-    );
-
-    Promise.all(jobPromises)
-      .then(() => {
-        this.logger.log(
-          `Queued ${validItems.length} products for detailed scraping in ${batches.length} batches (priority: ${priority})`,
-        );
-      })
-      .catch((err) => {
-        this.logger.error(
-          `Product detail batch queuing failed: ${err.message}`,
-        );
-      });
-  }
-
-  /**
-   * Lazy detail scraping: only scrape top N visible products that are stale (>24h) or never scraped.
-   * This replaces the old eager approach that scraped ALL products immediately.
-   */
-  private async queueLazyDetailScraping(
-    products: ProductSearchResult[],
-  ): Promise<void> {
-    const now = Date.now();
-    const oneDay = SEARCH_CONSTANTS.STALE_PRODUCT_THRESHOLD_MS;
-    const topN = Math.min(products.length, SEARCH_CONSTANTS.LAZY_SCRAPE_TOP_N);
-    const toScrape: { url: string; retailer: string }[] = [];
-
-    // Only consider the top N products (most likely to be viewed)
-    for (let i = 0; i < topN; i++) {
-      const p = products[i];
-      if (!p.lastScraped || now - new Date(p.lastScraped).getTime() > oneDay) {
-        toScrape.push({ url: p.productUrl, retailer: p.retailer });
-      }
-    }
-
-    if (toScrape.length === 0) return;
-
-    this.logger.log(
-      `Lazy detail scraping: ${toScrape.length}/${topN} top products need refresh`,
-    );
-
-    await this.enqueueProductDetailJobs(toScrape, JOB_PRIORITIES.LAZY_DETAIL);
-  }
-
-  /**
-   * Queue stale product refresh with lower priority (fire-and-forget)
-   */
-  private async queueStaleProductRefresh(
-    products: ProductSearchResult[],
-  ): Promise<void> {
-    const staleThreshold = new Date(
-      Date.now() - SEARCH_CONSTANTS.STALE_PRODUCT_THRESHOLD_MS,
-    );
-    const staleProducts = products.filter(
-      (p) => !p.lastScraped || new Date(p.lastScraped) < staleThreshold,
-    );
-
-    if (staleProducts.length === 0) return;
-
-    await this.enqueueProductDetailJobs(
-      staleProducts.map((p) => ({
-        url: p.productUrl,
-        retailer: p.retailer,
-      })),
-      JOB_PRIORITIES.REFRESH_STALE,
-    );
-  }
-
-  /**
-   * LIVE ENRICHMENT FOR FIRST PAGE (Critical UX Path)
-   *
-   * Synchronously fetch product details for top N Myntra/Flipkart products on first page.
-   * Uses FETCH strategy only (no browser), strict timeouts, and graceful degradation.
-   *
-   * @param products - Candidate products (already filtered for Myntra/Flipkart)
-   * @returns Enriched products (partial success tolerated)
-   */
-  private async liveFetchProductDetails<
-    T extends {
-      productUrl: string;
-      retailer: string;
-      scrapStatus: string;
-      lastScraped?: Date | null;
-    },
-  >(products: T[]): Promise<T[]> {
-    const startTime = Date.now();
-    const now = Date.now();
-    const freshnessThreshold = SEARCH_CONSTANTS.LIVE_ENRICH_FRESHNESS_MS;
-
-    // Filter candidates: only Myntra/Flipkart, top N, stale or never detailed
-    const candidates = products.filter((p) => {
-      const retailer = p.retailer.toLowerCase();
-      if (retailer !== 'myntra' && retailer !== 'flipkart') return false;
-
-      const normalisedScrapStatus = p.scrapStatus.toLowerCase();
-
-      if (normalisedScrapStatus === 'basic') return true;
-
-      // Skip if recently detailed (< 24h)
-      if (
-        p.lastScraped &&
-        now - new Date(p.lastScraped).getTime() < freshnessThreshold
-      ) {
-        return false;
-      }
-
-      return true;
-    });
-
-    if (candidates.length === 0) {
-      this.logger.debug('No candidates for live enrichment');
-      return products;
-    }
-
-    this.logger.log(
-      `Live enrichment: ${candidates.length} products (Myntra/Flipkart, first page)`,
-    );
-
-    // Process in controlled batches to respect concurrency limit
-    const concurrency = SEARCH_CONSTANTS.LIVE_ENRICH_CONCURRENCY;
-    const enrichedMap = new Map<string, any>();
-    const failedUrls: string[] = [];
-
-    for (let i = 0; i < candidates.length; i += concurrency) {
-      const batch = candidates.slice(i, i + concurrency);
-
-      const results = await Promise.allSettled(
-        batch.map((product) =>
-          this.fetchProductDetailWithTimeout(
-            product.productUrl,
-            product.retailer,
-          ),
-        ),
-      );
-
-      results.forEach((result, idx) => {
-        const product = batch[idx];
-        if (result.status === 'fulfilled' && result.value) {
-          enrichedMap.set(product.productUrl, result.value);
-        } else {
-          failedUrls.push(product.productUrl);
-          this.logger.warn(
-            `Live enrich failed for ${product.productUrl}: ${
-              result.status === 'rejected' ? result.reason : 'null result'
-            }`,
-          );
-        }
-      });
-    }
-
-    // Queue background jobs for failed products (idempotent)
-    if (failedUrls.length > 0) {
-      const failedProducts = candidates
-        .filter((p) => failedUrls.includes(p.productUrl))
-        .map((p) => ({ url: p.productUrl, retailer: p.retailer }));
-
-      this.enqueueProductDetailJobs(
-        failedProducts,
-        JOB_PRIORITIES.LAZY_DETAIL,
-      ).catch((err) => {
-        this.logger.error(
-          `Failed to queue background jobs for failed live enrichments: ${err.message}`,
-        );
-      });
-    }
-
-    const elapsed = Date.now() - startTime;
-    const successCount = enrichedMap.size;
-    const successRate = ((successCount / candidates.length) * 100).toFixed(1);
-
-    this.logger.log(
-      `Live enrichment completed: ${successCount}/${candidates.length} success (${successRate}%), ${elapsed}ms total`,
-    );
-
-    // Merge enriched data back into products
-    return products.map((p) => {
-      const enriched = enrichedMap.get(p.productUrl);
-      if (enriched) {
-        return {
-          ...p,
-          ...enriched,
-          scrapStatus: 'DETAILED',
-        };
-      }
-      return p;
-    });
-  }
-
-  /**
-   * Fetch product detail with hard timeout using FETCH strategy only.
-   * Returns null on timeout or error.
-   */
-  private async fetchProductDetailWithTimeout(
-    url: string,
-    retailer: string,
-  ): Promise<any | null> {
-    const timeout = SEARCH_CONSTANTS.LIVE_ENRICH_TIMEOUT_MS;
-
-    const timeoutPromise = new Promise<null>((resolve) =>
-      setTimeout(() => resolve(null), timeout),
-    );
-
-    const fetchPromise = (async () => {
-      try {
-        const result = await this.fetchScraper.scrape({
-          url,
-          domain: this.extractDomain(url)!,
-          options: { timeout },
-        });
-
-        if (!result.success || !result.data) {
-          return null;
-        }
-
-        const parsed = this.parserService.parseDetail(
-          result.data,
-          retailer as any,
-        );
-        if (!parsed) return null;
-
-        // Save to DB (fire-and-forget)
-        this.productSaveService
-          .upsertProducts(
-            [{ ...parsed, productUrl: url }],
-            ScrapStatus.DETAILED,
-          )
-          .then(() => this.productSaveService.generateAndSaveEmbedding(url))
-          .catch((err) => {
-            this.logger.error(
-              `Failed to persist live-enriched ${url}: ${err.message}`,
-            );
-          });
-
-        return {
-          description: parsed.description,
-          brand: parsed.brand,
-          category: parsed.category,
-          images: parsed.images || [],
-        };
-      } catch (err) {
-        this.logger.debug(`Live fetch error for ${url}: ${err.message}`);
-        return null;
-      }
-    })();
-
-    return Promise.race([fetchPromise, timeoutPromise]);
-  }
-
   // ==========================================================================
   // LIVE SCRAPING & PERSISTENCE
   // ==========================================================================
@@ -1144,29 +821,8 @@ export class SearchService implements OnModuleInit {
           );
         });
 
-        // Lazy detail scraping: only queue top N most visible products
-        // (instead of eagerly scraping ALL products)
-        const topN = Math.min(
-          dedupedProducts.length,
-          SEARCH_CONSTANTS.LAZY_SCRAPE_TOP_N,
-        );
-        const topProducts = dedupedProducts.slice(0, topN);
-
-        this.enqueueProductDetailJobs(
-          topProducts.map((p) => ({
-            url: p.productUrl,
-            retailer: p.retailer,
-          })),
-          JOB_PRIORITIES.LAZY_DETAIL,
-        ).catch((err) => {
-          this.logger.error(
-            `Lazy detail scraping for live products failed: ${err.message}`,
-            err.stack,
-          );
-        });
-
         this.logger.log(
-          `Persisted ${dedupedProducts.length} live-scraped products, queued top ${topN} for details`,
+          `Persisted ${dedupedProducts.length} live-scraped products (BASIC only, detail scraping is click-triggered)`,
         );
       } catch (err) {
         this.logger.error(

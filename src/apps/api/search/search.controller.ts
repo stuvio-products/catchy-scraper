@@ -18,12 +18,6 @@ export class SearchController {
       throw new Error('Query is required');
     }
 
-    // Call the intent-aware orchestrator
-    // We don't support passing explicit filters via GET /search query params for now,
-    // unless we want to parse them from URL.
-    // The requirement says "Input: query... optional explicit filters".
-    // "Examples: 'white shirt under 1000'".
-
     return this.searchService.searchWithIntent(user!.id, query);
   }
 

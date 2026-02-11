@@ -20,7 +20,6 @@ export class HealthController {
       status: 'ok',
       timestamp: new Date().toISOString(),
       service: 'api',
-      queue: queueHealth,
     };
   }
 

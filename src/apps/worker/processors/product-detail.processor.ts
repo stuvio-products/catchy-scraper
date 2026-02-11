@@ -5,10 +5,10 @@ import { QUEUE_NAMES } from '@/shared/queue/queue.constants';
 import { ProductDetailJob } from '@/shared/queue/interfaces/product-detail-job.interface';
 import { ScrapeOrchestratorService } from '@/shared/scraping/services/scrape-orchestrator.service';
 import { ProductSaveService } from '@/shared/scraping/services/product-save.service';
-import { ScrapStatus } from '@prisma/client';
-
+import { ScrapeLockService } from '@/shared/scraping/services/scrape-lock.service';
+import { PrismaService } from '@/shared/prisma/prisma.service';
+import { ScrapStatus, ScrapeState } from '@prisma/client';
 import { ParserService } from '@/shared/scraping/services/parser.service';
-import { ScrapeStrategy } from '@/shared/domain/enums/scrape-strategy.enum';
 
 @Processor(QUEUE_NAMES.PRODUCT_DETAIL_QUEUE)
 export class ProductDetailProcessor extends WorkerHost {
@@ -18,6 +18,8 @@ export class ProductDetailProcessor extends WorkerHost {
     private readonly orchestrator: ScrapeOrchestratorService,
     private readonly productSaveService: ProductSaveService,
     private readonly parserService: ParserService,
+    private readonly scrapeLock: ScrapeLockService,
+    private readonly prisma: PrismaService,
   ) {
     super();
   }
@@ -33,16 +35,38 @@ export class ProductDetailProcessor extends WorkerHost {
       products.map(async (product) => {
         const { url, domain, retailer } = product;
 
-        // Skip Meesho product detail scraping (blocked by Akamai bot detection)
+        // Skip Meesho product detail scraping
         if (retailer.toLowerCase() === 'meesho') {
           this.logger.warn(
-            `Skipping Meesho product detail scraping for ${url} (Akamai blocks browser automation)`,
+            `Skipping Meesho product detail scraping for ${url}`,
           );
           return {
             url,
             success: false,
-            error: 'Meesho detail scraping disabled (Akamai bot detection)',
+            error: 'Meesho detail scraping not supported',
           };
+        }
+
+        // Find product by URL to get productId for lock/state management
+        const dbProduct = await this.prisma.client.product.findUnique({
+          where: { productUrl: url },
+          select: { id: true },
+        });
+
+        const productId = dbProduct?.id;
+
+        // Acquire distributed lock (skip if product not in DB yet)
+        if (productId) {
+          const lockAcquired = await this.scrapeLock.acquireLock(productId);
+          if (!lockAcquired) {
+            this.logger.debug(
+              `Lock not acquired for ${url} — scrape already in progress`,
+            );
+            return { url, success: false, error: 'Already in progress' };
+          }
+
+          // Mark as IN_PROGRESS
+          await this.updateScrapeState(productId, ScrapeState.IN_PROGRESS);
         }
 
         try {
@@ -55,24 +79,32 @@ export class ProductDetailProcessor extends WorkerHost {
           });
 
           if (result.success && result.data) {
-            // Parse the detail page
             const parsedProduct = this.parserService.parseDetail(
               result.data,
               retailer,
             );
 
             if (parsedProduct) {
-              // Ensure URL is correct (parsers might not know it)
               parsedProduct.productUrl = url;
 
-              // Save detailed info
               await this.productSaveService.upsertProducts(
                 [parsedProduct],
                 ScrapStatus.DETAILED,
               );
 
-              // Generate embedding for the enriched product
               await this.productSaveService.generateAndSaveEmbedding(url);
+
+              // Update state to IDLE + mark detailed timestamp
+              if (productId) {
+                await this.prisma.client.product.update({
+                  where: { id: productId },
+                  data: {
+                    scrapeState: ScrapeState.IDLE,
+                    lastDetailedScrapedAt: new Date(),
+                    lastScrapeAttemptAt: new Date(),
+                  },
+                });
+              }
 
               this.logger.debug(
                 `Updated ${url} with full details and regenerated embedding`,
@@ -80,11 +112,15 @@ export class ProductDetailProcessor extends WorkerHost {
               return { url, success: true };
             } else {
               this.logger.warn(`Failed to parse details for ${url}`);
-              // Still update status to prevent infinite retry if parsing is just broken for one page
               await this.productSaveService.updateScrapStatus(
                 url,
                 ScrapStatus.DETAILED,
               );
+
+              if (productId) {
+                await this.updateScrapeState(productId, ScrapeState.FAILED);
+              }
+
               return {
                 url,
                 success: false,
@@ -93,10 +129,19 @@ export class ProductDetailProcessor extends WorkerHost {
             }
           } else {
             this.logger.warn(`Scrape failed for ${url}: ${result.error}`);
+
+            if (productId) {
+              await this.updateScrapeState(productId, ScrapeState.FAILED);
+            }
+
             return { url, success: false, error: result.error };
           }
         } catch (error) {
           this.logger.error(`Error processing ${url}: ${error.message}`);
+
+          if (productId) {
+            await this.updateScrapeState(productId, ScrapeState.FAILED);
+          }
 
           // Smart retry delays based on HTTP status codes
           const errorMsg = error.message || '';
@@ -113,6 +158,11 @@ export class ProductDetailProcessor extends WorkerHost {
           }
 
           return { url, success: false, error: error.message };
+        } finally {
+          // Always release lock
+          if (productId) {
+            await this.scrapeLock.releaseLock(productId);
+          }
         }
       }),
     );
@@ -123,6 +173,28 @@ export class ProductDetailProcessor extends WorkerHost {
     );
 
     return results;
+  }
+
+  /**
+   * Update scrapeState and lastScrapeAttemptAt for a product.
+   */
+  private async updateScrapeState(
+    productId: string,
+    state: ScrapeState,
+  ): Promise<void> {
+    try {
+      await this.prisma.client.product.update({
+        where: { id: productId },
+        data: {
+          scrapeState: state,
+          lastScrapeAttemptAt: new Date(),
+        },
+      });
+    } catch (error) {
+      this.logger.error(
+        `Failed to update scrape state for ${productId}: ${error.message}`,
+      );
+    }
   }
 
   async onCompleted(job: Job, result: any) {

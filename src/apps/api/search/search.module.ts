@@ -13,9 +13,6 @@ import { IntentModule } from '@/shared/intent/intent.module';
     BullModule.registerQueue({
       name: QUEUE_NAMES.SCRAPE_QUEUE,
     }),
-    BullModule.registerQueue({
-      name: QUEUE_NAMES.PRODUCT_DETAIL_QUEUE,
-    }),
     ScrapingModule,
     GeminiModule,
     forwardRef(() => ChatModule),
