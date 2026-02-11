@@ -393,7 +393,6 @@ deploy_application() {
         -e REDIS_PORT=6379 \
         -e DATABASE_URL="postgresql://catchy_admin:C@tchy_Pr0d_2026!xK9m@catchy-postgres:5432/catchy_production?schema=public" \
         -e DATABASE_REPLICA_URL="postgresql://catchy_admin:C@tchy_Pr0d_2026!xK9m@catchy-postgres:5432/catchy_production?schema=public" \
-        -e BROWSER_COUNT=0 \
         -p "127.0.0.1:${new_port}:${INTERNAL_PORT}" \
         --restart unless-stopped \
         "$api_image" || {
