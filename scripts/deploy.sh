@@ -308,8 +308,8 @@ deploy_application() {
     docker network create "$NETWORK_NAME" 2>/dev/null || true
 
     # ── Step 2: Ensure infrastructure services are running ──
-    log "Ensuring infrastructure services (db, redis) are running..."
-    docker compose -f "$COMPOSE_FILE" up -d db redis || {
+    log "Ensuring infrastructure services (db, db-replica, redis, browser-service) are running..."
+    docker compose -f "$COMPOSE_FILE" up -d db db-replica redis browser-service || {
         log_error "Failed to start infrastructure services"
         return 1
     }
@@ -326,7 +326,21 @@ deploy_application() {
         sleep 2
         db_wait=$((db_wait + 2))
     done
-    log "✅ Database is healthy (catchy-postgres on port 5436)"
+    log "✅ Database is healthy"
+
+    # Wait for DB Replica
+    log "Waiting for database replica to be healthy..."
+    local replica_wait=0
+    while ! docker compose -f "$COMPOSE_FILE" ps db-replica 2>/dev/null | grep -q "healthy"; do
+        if [ $replica_wait -ge 120 ]; then
+            log_warn "Replica did not become healthy within 120s, continuing anyway (may fall back to primary)"
+            docker compose -f "$COMPOSE_FILE" logs --tail=30 db-replica
+            break
+        fi
+        sleep 2
+        replica_wait=$((replica_wait + 2))
+    done
+    log "✅ Database Replica is healthy"
 
     # Wait for Redis
     log "Waiting for Redis..."
@@ -339,7 +353,7 @@ deploy_application() {
         sleep 2
         redis_wait=$((redis_wait + 2))
     done
-    log "✅ Redis is ready (catchy-redis on port 6381)"
+    log "✅ Redis is ready"
 
     # ── Step 3: Build new image (old containers keep running) ──
     log "Building new API image (old instance keeps serving traffic)..."
@@ -377,22 +391,18 @@ deploy_application() {
     log_info "Using image: $api_image"
 
     # Start new container with port mapping to the new slot port
-    # Connect to catchy-network so it can reach db/redis by service name
-    local env_file_flag=""
-    if [ -f "$APP_DIR/.env" ]; then
-        env_file_flag="--env-file $APP_DIR/.env"
+    # Connect to catchy-network so it can reach db/redis/browser-service by service name
+    # Start new container with port mapping to the new slot port
+    # All config comes from .env file
+    if [ ! -f "$APP_DIR/.env" ]; then
+        log_error ".env file missing! Cannot start container."
+        return 1
     fi
 
     docker run -d \
         --name "catchy-api-${new_slot}" \
         --network "$NETWORK_NAME" \
-        $env_file_flag \
-        -e NODE_ENV=production \
-        -e API_PORT=${INTERNAL_PORT} \
-        -e REDIS_HOST=catchy-redis \
-        -e REDIS_PORT=6379 \
-        -e DATABASE_URL="postgresql://catchy_admin:C@tchy_Pr0d_2026!xK9m@catchy-postgres:5432/catchy_production?schema=public" \
-        -e DATABASE_REPLICA_URL="postgresql://catchy_admin:C@tchy_Pr0d_2026!xK9m@catchy-postgres-replica:5432/catchy_production?schema=public" \
+        --env-file "$APP_DIR/.env" \
         -p "127.0.0.1:${new_port}:${INTERNAL_PORT}" \
         --restart unless-stopped \
         "$api_image" || {
@@ -434,10 +444,9 @@ deploy_application() {
     docker compose -f "$COMPOSE_FILE" stop api 2>/dev/null || true
     docker compose -f "$COMPOSE_FILE" rm -f api 2>/dev/null || true
 
-    # ── Step 9: Update worker (no user-facing traffic, safe to restart) ──
-    log "Updating worker container..."
-    docker compose -f "$COMPOSE_FILE" build worker 2>/dev/null || true
-    docker compose -f "$COMPOSE_FILE" up -d --force-recreate --no-deps worker 2>/dev/null || log_warn "Worker update skipped"
+    # ── Step 9: Update worker and browser-service (safe to restart) ──
+    log "Updating worker and browser-service containers..."
+    docker compose -f "$COMPOSE_FILE" up -d --build --force-recreate --no-deps worker browser-service 2>/dev/null || log_warn "Worker/Browser update skipped"
 
     # ── Step 10: Save state ──
     echo "$new_slot" > "$STATE_FILE"

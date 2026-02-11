@@ -2,10 +2,11 @@ services:
   db:
     image: pgvector/pgvector:pg16
     container_name: catchy-postgres
+    env_file: .env
     environment:
-      POSTGRES_USER: catchy_admin
-      POSTGRES_PASSWORD: C@tchy_Pr0d_2026!xK9m
-      POSTGRES_DB: catchy_production
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
     ports:
       - "127.0.0.1:5436:5432"
     volumes:
@@ -21,7 +22,7 @@ services:
       -c hot_standby_feedback=on
       -c hba_file=/etc/postgresql/pg_hba.conf
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U catchy_admin"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -32,12 +33,13 @@ services:
   db-replica:
     image: pgvector/pgvector:pg16
     container_name: catchy-postgres-replica
+    env_file: .env
     environment:
-      POSTGRES_USER: catchy_admin
-      POSTGRES_PASSWORD: C@tchy_Pr0d_2026!xK9m
-      POSTGRES_DB: catchy_production
-      PGUSER: replicator
-      PGPASSWORD: replicator_password
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      PGUSER: ${PGUSER}
+      PGPASSWORD: ${PGPASSWORD}
     ports:
       - "127.0.0.1:5437:5432"
     volumes:
@@ -48,7 +50,7 @@ services:
         condition: service_healthy
     command: ["/bin/bash", "/init_replica.sh"]
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U catchy_admin -d catchy_production"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -82,14 +84,15 @@ services:
       - "127.0.0.1:3002:3000"
     env_file: .env
     environment:
-      NODE_ENV: production
-      REDIS_HOST: redis
-      REDIS_PORT: 6379
-      DATABASE_URL: postgresql://catchy_admin:C@tchy_Pr0d_2026!xK9m@db:5432/catchy_production?schema=public
-      DATABASE_REPLICA_URL: postgresql://catchy_admin:C@tchy_Pr0d_2026!xK9m@db-replica:5432/catchy_production?schema=public
-      API_PORT: 3000
-      BROWSER_SERVICE_PORT: 3001
-      BROWSER_SERVICE_API_KEY: internal-service-key
+      NODE_ENV: ${NODE_ENV}
+      REDIS_HOST: ${REDIS_HOST}
+      REDIS_PORT: ${REDIS_PORT}
+      DATABASE_URL: ${DATABASE_URL}
+      DATABASE_REPLICA_URL: ${DATABASE_REPLICA_URL}
+      API_PORT: ${API_PORT}
+      BROWSER_SERVICE_HOST: ${BROWSER_SERVICE_HOST}
+      BROWSER_SERVICE_PORT: ${BROWSER_SERVICE_PORT}
+      BROWSER_SERVICE_API_KEY: ${BROWSER_SERVICE_API_KEY}
     depends_on:
       db:
         condition: service_healthy
@@ -100,7 +103,6 @@ services:
       interval: 10s
       timeout: 5s
       retries: 3
-      start_period: 15s
     restart: unless-stopped
     deploy:
       resources:
@@ -117,14 +119,15 @@ services:
     container_name: catchy-worker
     env_file: .env
     environment:
-      NODE_ENV: production
-      REDIS_HOST: redis
-      REDIS_PORT: 6379
-      DATABASE_URL: postgresql://catchy_admin:C@tchy_Pr0d_2026!xK9m@db:5432/catchy_production?schema=public
-      DATABASE_REPLICA_URL: postgresql://catchy_admin:C@tchy_Pr0d_2026!xK9m@db-replica:5432/catchy_production?schema=public
-      WORKER_CONCURRENCY: 8
-      BROWSER_SERVICE_PORT: 3001
-      BROWSER_SERVICE_API_KEY: internal-service-key
+      NODE_ENV: ${NODE_ENV}
+      REDIS_HOST: ${REDIS_HOST}
+      REDIS_PORT: ${REDIS_PORT}
+      DATABASE_URL: ${DATABASE_URL}
+      DATABASE_REPLICA_URL: ${DATABASE_REPLICA_URL}
+      WORKER_CONCURRENCY: ${WORKER_CONCURRENCY}
+      BROWSER_SERVICE_HOST: ${BROWSER_SERVICE_HOST}
+      BROWSER_SERVICE_PORT: ${BROWSER_SERVICE_PORT}
+      BROWSER_SERVICE_API_KEY: ${BROWSER_SERVICE_API_KEY}
     depends_on:
       db:
         condition: service_healthy
@@ -148,13 +151,13 @@ services:
     container_name: catchy-browser-service
     env_file: .env
     environment:
-      NODE_ENV: production
-      BROWSER_SERVICE_PORT: 3001
-      BROWSER_SERVICE_API_KEY: internal-service-key
-      REDIS_HOST: redis
-      REDIS_PORT: 6379
-      BROWSER_HEADLESS: "true"
-      BROWSER_TIMEOUT_MS: 30000
+      NODE_ENV: ${NODE_ENV}
+      BROWSER_SERVICE_PORT: ${BROWSER_SERVICE_PORT}
+      BROWSER_SERVICE_API_KEY: ${BROWSER_SERVICE_API_KEY}
+      REDIS_HOST: ${REDIS_HOST}
+      REDIS_PORT: ${REDIS_PORT}
+      BROWSER_HEADLESS: ${BROWSER_HEADLESS}
+      BROWSER_TIMEOUT_MS: ${BROWSER_TIMEOUT_MS}
     restart: unless-stopped
     networks:
       - catchy-network
