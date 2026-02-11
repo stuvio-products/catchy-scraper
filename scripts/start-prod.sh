@@ -91,6 +91,24 @@ ensure_db_setup() {
     else
          log "✅ Database '$desired_db' exists"
     fi
+
+    # KEY FIX: Check Replicator User
+    if ! docker exec -u postgres "$db_container" psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='replicator'" | grep -q 1; then
+        warn "User 'replicator' does not exist. Creating..."
+        docker exec -u postgres "$db_container" psql -c "CREATE USER replicator WITH REPLICATION ENCRYPTED PASSWORD 'replicator_password';" || error "Failed to create replicator"
+        log "✅ User 'replicator' created"
+    else
+        log "✅ User 'replicator' exists"
+    fi
+    
+    # Check Replication Slot
+    if ! docker exec -u postgres "$db_container" psql -tAc "SELECT 1 FROM pg_replication_slots WHERE slot_name='replication_slot'" | grep -q 1; then
+        warn "Replication slot 'replication_slot' does not exist. Creating..."
+        docker exec -u postgres "$db_container" psql -c "SELECT pg_create_physical_replication_slot('replication_slot');" || error "Failed to create slot"
+        log "✅ Replication slot created"
+    else
+        log "✅ Replication slot exists"
+    fi
 }
 ensure_db_setup || warn "DB verification failed, proceeding anyway..."
 
