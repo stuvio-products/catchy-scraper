@@ -3,10 +3,6 @@ services:
     image: pgvector/pgvector:pg16
     container_name: catchy-postgres
     env_file: .env
-    environment:
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: ${POSTGRES_DB}
     ports:
       - "127.0.0.1:5436:5432"
     volumes:
@@ -22,7 +18,8 @@ services:
       -c hot_standby_feedback=on
       -c hba_file=/etc/postgresql/pg_hba.conf
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      # Use $$ to prevent Compose interpolation, so shell inside container expands the variable
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -34,12 +31,6 @@ services:
     image: pgvector/pgvector:pg16
     container_name: catchy-postgres-replica
     env_file: .env
-    environment:
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: ${POSTGRES_DB}
-      PGUSER: ${PGUSER}
-      PGPASSWORD: ${PGPASSWORD}
     ports:
       - "127.0.0.1:5437:5432"
     volumes:
@@ -50,7 +41,7 @@ services:
         condition: service_healthy
     command: ["/bin/bash", "/init_replica.sh"]
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -61,6 +52,7 @@ services:
   redis:
     image: redis:7-alpine
     container_name: catchy-redis
+    env_file: .env
     ports:
       - "127.0.0.1:6381:6379"
     volumes:
@@ -83,16 +75,6 @@ services:
     ports:
       - "127.0.0.1:3002:3000"
     env_file: .env
-    environment:
-      NODE_ENV: ${NODE_ENV}
-      REDIS_HOST: ${REDIS_HOST}
-      REDIS_PORT: ${REDIS_PORT}
-      DATABASE_URL: ${DATABASE_URL}
-      DATABASE_REPLICA_URL: ${DATABASE_REPLICA_URL}
-      API_PORT: ${API_PORT}
-      BROWSER_SERVICE_HOST: ${BROWSER_SERVICE_HOST}
-      BROWSER_SERVICE_PORT: ${BROWSER_SERVICE_PORT}
-      BROWSER_SERVICE_API_KEY: ${BROWSER_SERVICE_API_KEY}
     depends_on:
       db:
         condition: service_healthy
@@ -118,16 +100,6 @@ services:
       dockerfile: docker/worker.Dockerfile
     container_name: catchy-worker
     env_file: .env
-    environment:
-      NODE_ENV: ${NODE_ENV}
-      REDIS_HOST: ${REDIS_HOST}
-      REDIS_PORT: ${REDIS_PORT}
-      DATABASE_URL: ${DATABASE_URL}
-      DATABASE_REPLICA_URL: ${DATABASE_REPLICA_URL}
-      WORKER_CONCURRENCY: ${WORKER_CONCURRENCY}
-      BROWSER_SERVICE_HOST: ${BROWSER_SERVICE_HOST}
-      BROWSER_SERVICE_PORT: ${BROWSER_SERVICE_PORT}
-      BROWSER_SERVICE_API_KEY: ${BROWSER_SERVICE_API_KEY}
     depends_on:
       db:
         condition: service_healthy
@@ -150,14 +122,6 @@ services:
       dockerfile: docker/browser.Dockerfile
     container_name: catchy-browser-service
     env_file: .env
-    environment:
-      NODE_ENV: ${NODE_ENV}
-      BROWSER_SERVICE_PORT: ${BROWSER_SERVICE_PORT}
-      BROWSER_SERVICE_API_KEY: ${BROWSER_SERVICE_API_KEY}
-      REDIS_HOST: ${REDIS_HOST}
-      REDIS_PORT: ${REDIS_PORT}
-      BROWSER_HEADLESS: ${BROWSER_HEADLESS}
-      BROWSER_TIMEOUT_MS: ${BROWSER_TIMEOUT_MS}
     restart: unless-stopped
     networks:
       - catchy-network
