@@ -10,11 +10,48 @@ services:
       - "127.0.0.1:5436:5432"
     volumes:
       - catchy-postgres-data:/var/lib/postgresql/data
+      - ./postgres/primary:/docker-entrypoint-initdb.d
+      - ./postgres/primary/pg_hba.conf:/etc/postgresql/pg_hba.conf
+    command: |
+      postgres
+      -c wal_level=replica
+      -c hot_standby=on
+      -c max_wal_senders=10
+      -c max_replication_slots=10
+      -c hot_standby_feedback=on
+      -c hba_file=/etc/postgresql/pg_hba.conf
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U catchy_admin"]
       interval: 5s
       timeout: 5s
       retries: 5
+    restart: unless-stopped
+    networks:
+      - catchy-network
+
+  db-replica:
+    image: pgvector/pgvector:pg16
+    container_name: catchy-postgres-replica
+    environment:
+      POSTGRES_USER: catchy_admin
+      POSTGRES_PASSWORD: C@tchy_Pr0d_2026!xK9m
+      POSTGRES_DB: catchy_production
+      PGUSER: replicator
+      PGPASSWORD: replicator_password
+    ports:
+      - "127.0.0.1:5437:5432"
+    volumes:
+      - catchy-postgres-replica-data:/var/lib/postgresql/data
+      - ./postgres/replica/init.sh:/init_replica.sh
+    depends_on:
+      db:
+        condition: service_healthy
+    command: ["/bin/bash", "/init_replica.sh"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U catchy_admin -d catchy_production"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
     restart: unless-stopped
     networks:
       - catchy-network
@@ -49,8 +86,10 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: 6379
       DATABASE_URL: postgresql://catchy_admin:C@tchy_Pr0d_2026!xK9m@db:5432/catchy_production?schema=public
-      DATABASE_REPLICA_URL: postgresql://catchy_admin:C@tchy_Pr0d_2026!xK9m@db:5432/catchy_production?schema=public
+      DATABASE_REPLICA_URL: postgresql://catchy_admin:C@tchy_Pr0d_2026!xK9m@db-replica:5432/catchy_production?schema=public
       API_PORT: 3000
+      BROWSER_SERVICE_PORT: 3001
+      BROWSER_SERVICE_API_KEY: internal-service-key
     depends_on:
       db:
         condition: service_healthy
@@ -82,13 +121,17 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: 6379
       DATABASE_URL: postgresql://catchy_admin:C@tchy_Pr0d_2026!xK9m@db:5432/catchy_production?schema=public
-      DATABASE_REPLICA_URL: postgresql://catchy_admin:C@tchy_Pr0d_2026!xK9m@db:5432/catchy_production?schema=public
+      DATABASE_REPLICA_URL: postgresql://catchy_admin:C@tchy_Pr0d_2026!xK9m@db-replica:5432/catchy_production?schema=public
       WORKER_CONCURRENCY: 8
+      BROWSER_SERVICE_PORT: 3001
+      BROWSER_SERVICE_API_KEY: internal-service-key
     depends_on:
       db:
         condition: service_healthy
       redis:
         condition: service_healthy
+      browser-service:
+        condition: service_started
     restart: unless-stopped
     deploy:
       resources:
@@ -98,9 +141,33 @@ services:
     networks:
       - catchy-network
 
+  browser-service:
+    build:
+      context: .
+      dockerfile: docker/browser.Dockerfile
+    container_name: catchy-browser-service
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      BROWSER_SERVICE_PORT: 3001
+      BROWSER_SERVICE_API_KEY: internal-service-key
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      BROWSER_HEADLESS: "true"
+      BROWSER_TIMEOUT_MS: 30000
+    restart: unless-stopped
+    networks:
+      - catchy-network
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+
 volumes:
   catchy-postgres-data:
     name: catchy-postgres-data
+  catchy-postgres-replica-data:
+    name: catchy-postgres-replica-data
   catchy-redis-data:
     name: catchy-redis-data
 
