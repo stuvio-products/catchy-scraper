@@ -1,29 +1,17 @@
-version: '3.8'
-
 services:
   db:
     image: pgvector/pgvector:pg16
     container_name: catchy-postgres
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-postgres}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: ${POSTGRES_DB:-catchy_db}
+      POSTGRES_USER: catchy_admin
+      POSTGRES_PASSWORD: C@tchy_Pr0d_2026!xK9m
+      POSTGRES_DB: catchy_production
     ports:
       - "127.0.0.1:5436:5432"
     volumes:
       - catchy-postgres-data:/var/lib/postgresql/data
-      - ./postgres/primary:/docker-entrypoint-initdb.d
-      - ./postgres/primary/pg_hba.conf:/etc/postgresql/pg_hba.conf
-    command: |
-      postgres
-      -c wal_level=replica
-      -c hot_standby=on
-      -c max_wal_senders=10
-      -c max_replication_slots=10
-      -c hot_standby_feedback=on
-      -c hba_file=/etc/postgresql/pg_hba.conf
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      test: ["CMD-SHELL", "pg_isready -U catchy_admin"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -60,7 +48,7 @@ services:
       NODE_ENV: production
       REDIS_HOST: redis
       REDIS_PORT: 6379
-      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-catchy_db}?schema=public
+      DATABASE_URL: postgresql://catchy_admin:C@tchy_Pr0d_2026!xK9m@db:5432/catchy_production?schema=public
       API_PORT: 3000
     depends_on:
       db:
@@ -92,7 +80,7 @@ services:
       NODE_ENV: production
       REDIS_HOST: redis
       REDIS_PORT: 6379
-      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-catchy_db}?schema=public
+      DATABASE_URL: postgresql://catchy_admin:C@tchy_Pr0d_2026!xK9m@db:5432/catchy_production?schema=public
       WORKER_CONCURRENCY: 8
     depends_on:
       db:
