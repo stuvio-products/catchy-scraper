@@ -1,75 +1,84 @@
 #!/bin/bash
-# Start the Scraper & Backend Infrastructure
+# =============================================================================
+# Start the Catchy Scraper & Backend Infrastructure (Local Development)
+# =============================================================================
 
-# Cleanup function to stop Docker containers
+# Cleanup function to stop Docker containers on exit
 cleanup() {
     echo ""
     echo "🛑 Stopping infrastructure..."
-
-    # Stop Docker containers
-    if command -v docker-compose &> /dev/null; then
-        docker-compose stop db db-replica redis browser-service
-    else
-        docker compose stop db db-replica redis browser-service
-    fi
-
+    docker compose stop db redis 2>/dev/null || true
     echo "✅ Infrastructure stopped"
     exit 0
 }
 
-echo "🚀 Starting Scraper Infrastructure..."
+echo "🚀 Starting Catchy Scraper Infrastructure..."
+echo ""
 
-# Check if Docker is installed
+# ─── Prerequisites check ────────────────────────────────────────────────────
 if ! command -v docker &> /dev/null; then
     echo "❌ Error: Docker is not installed!"
+    echo "   Install Docker: https://docs.docker.com/get-docker/"
     exit 1
 fi
 
-# Check if Docker daemon is running
 if ! docker info &> /dev/null; then
-    echo "🐳 Docker is not running. Please start Docker manually."
+    echo "🐳 Docker is not running. Please start Docker Desktop first."
     exit 1
 fi
 
 echo "✅ Docker is running"
 
-# Navigate to root directory
+# Navigate to project root
 cd "$(dirname "$0")/.."
 
-# Source environment variables for the shell (e.g. for Prisma CLI)
+# ─── Load environment ───────────────────────────────────────────────────────
 if [ -f .env ]; then
     echo "🔑 Loading environment from .env..."
-    # Export variables from .env, ignoring comments
     export $(grep -v '^#' .env | xargs)
+else
+    echo "⚠️  No .env file found. Copy .env.example to .env and configure it."
+    if [ -f .env.example ]; then
+        echo "   Run: cp .env.example .env"
+    fi
+    exit 1
 fi
 
-# Start infrastructure services (DB, Redis, Browser Service)
-echo "📦 Starting Docker containers (db, redis, browser-service)..."
-if command -v docker-compose &> /dev/null; then
-    docker-compose up -d db db-replica redis browser-service
-else
-    docker compose up -d db db-replica redis browser-service
-fi
+# ─── Start infrastructure ───────────────────────────────────────────────────
+echo "📦 Starting Docker containers (db, redis)..."
+docker compose up -d db redis
 
 echo ""
-echo "⏳ Waiting for databases to be ready..."
+echo "⏳ Waiting for services to be ready..."
 sleep 5
 
-# Set trap to catch Ctrl+C
+# Set trap for graceful shutdown
 trap cleanup SIGINT SIGTERM
+
+# ─── Database setup ──────────────────────────────────────────────────────────
+echo ""
+echo "🔄 Running Prisma generate..."
+npx prisma generate
 
 echo ""
 echo "🔄 Running database migrations..."
 if ! npx prisma migrate dev; then
-    echo "❌ Error: Database migrations failed!"
-    exit 1
+    echo "⚠️  Migrations failed. Trying prisma db push instead..."
+    npx prisma db push || {
+        echo "❌ Error: Database setup failed!"
+        exit 1
+    }
 fi
 
+# ─── Start application ──────────────────────────────────────────────────────
 echo ""
 echo "🚀 Starting Applications (API & Worker) in watch mode..."
-echo "-----------------------------------------------------"
-echo "👉 Press Ctrl+C to stop the apps and Docker containers"
-echo "-----------------------------------------------------"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "  API:    http://localhost:3000"
+echo "  Health: http://localhost:3000/health"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "  Press Ctrl+C to stop everything"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo ""
 
-# Start API and Worker concurrently
 exec npm run dev

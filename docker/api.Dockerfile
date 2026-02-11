@@ -30,8 +30,15 @@ WORKDIR /app
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/package*.json ./
 
+# Copy prisma schema (needed for migrations during deploy)
+COPY --from=build /app/prisma ./prisma
+COPY --from=build /app/prisma.config.ts ./prisma.config.ts
+
 # Install only production dependencies
 RUN npm ci --omit=dev
+
+# Re-generate prisma client for production
+RUN npx prisma generate
 
 # Expose API port
 EXPOSE 3000

@@ -1,0 +1,182 @@
+name: Deploy to Production
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: 'Branch to deploy'
+        required: false
+        default: 'main'
+        type: string
+
+jobs:
+  deploy:
+    name: Deploy to VPS
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          ref: ${{ github.event.inputs.branch || github.ref_name }}
+
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.VPS_SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H ${{ secrets.VPS_IP }} >> ~/.ssh/known_hosts
+
+      - name: Test SSH connection
+        run: |
+          echo "🔌 Testing SSH connection..."
+          max_retries=3
+          retry=0
+
+          while [ $retry -lt $max_retries ]; do
+            if ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 root@${{ secrets.VPS_IP }} "echo 'SSH connection successful'"; then
+              echo "✅ SSH connection successful"
+              break
+            else
+              retry=$((retry + 1))
+              if [ $retry -lt $max_retries ]; then
+                echo "⚠️  SSH connection failed, retrying in 5 seconds... (attempt $retry/$max_retries)"
+                sleep 5
+              else
+                echo "❌ SSH connection failed after $max_retries attempts"
+                exit 1
+              fi
+            fi
+          done
+
+      - name: Transfer deployment scripts
+        run: |
+          echo "📦 Transferring deployment scripts..."
+          scp -o StrictHostKeyChecking=no scripts/deploy.sh root@${{ secrets.VPS_IP }}:/tmp/deploy.sh
+          scp -o StrictHostKeyChecking=no scripts/setup-nginx.sh root@${{ secrets.VPS_IP }}:/tmp/setup-nginx.sh
+          ssh -o StrictHostKeyChecking=no root@${{ secrets.VPS_IP }} "chmod +x /tmp/deploy.sh /tmp/setup-nginx.sh"
+
+      - name: Run deployment
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "🚀 Starting deployment..."
+          DEPLOY_BRANCH="${{ github.event.inputs.branch || github.ref_name }}"
+          DEPLOY_SHA="${{ github.sha }}"
+          echo "📦 Deploying branch: $DEPLOY_BRANCH (commit: ${DEPLOY_SHA:0:7})"
+          ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=60 -o ServerAliveCountMax=3 root@${{ secrets.VPS_IP }} "export DEPLOY_BRANCH='$DEPLOY_BRANCH' && export DEPLOY_SHA='$DEPLOY_SHA' && export GITHUB_TOKEN='$GITHUB_TOKEN' && bash -s" << 'ENDSSH'
+            set -e
+            
+            APP_DIR="/var/www/catchy-backend"
+            
+            # Ensure app directory exists
+            echo "📁 Ensuring app directory exists..."
+            mkdir -p "$APP_DIR/scripts" || {
+              echo "❌ Failed to create app directory"
+              exit 1
+            }
+            
+            # Copy scripts to app directory
+            echo "📦 Copying deployment scripts..."
+            cp /tmp/deploy.sh "$APP_DIR/scripts/deploy.sh"
+            cp /tmp/setup-nginx.sh "$APP_DIR/scripts/setup-nginx.sh"
+            chmod +x "$APP_DIR/scripts/"*.sh
+            
+            # Run deployment script
+            echo "=========================================="
+            echo "Starting deployment script..."
+            echo "Deploying branch: $DEPLOY_BRANCH"
+            echo "Commit: $DEPLOY_SHA"
+            echo "=========================================="
+            bash "$APP_DIR/scripts/deploy.sh" 2>&1 | tee /tmp/deployment.log
+            
+            # Capture exit code
+            DEPLOY_EXIT_CODE=${PIPESTATUS[0]}
+            
+            if [ -z "$DEPLOY_EXIT_CODE" ] || ! [ "$DEPLOY_EXIT_CODE" -eq "$DEPLOY_EXIT_CODE" ] 2>/dev/null; then
+              DEPLOY_EXIT_CODE=1
+            fi
+            
+            echo ""
+            echo "=========================================="
+            echo "Deployment Summary"
+            echo "=========================================="
+            
+            if [ "$DEPLOY_EXIT_CODE" = "0" ]; then
+              echo "✅ Deployment completed successfully"
+            else
+              echo "❌ Deployment failed with exit code: $DEPLOY_EXIT_CODE"
+            fi
+            
+            # Show container status
+            echo ""
+            echo "Container Status:"
+            if [ -f "$APP_DIR/docker-compose.prod.yml" ]; then
+              cd "$APP_DIR"
+              docker compose -f docker-compose.prod.yml ps || true
+              
+              echo ""
+              echo "Recent Application Logs:"
+              docker compose -f docker-compose.prod.yml logs --tail=30 api || true
+            else
+              echo "⚠️  docker-compose.prod.yml not found"
+              echo "Directory contents:"
+              ls -la "$APP_DIR/" || true
+            fi
+            
+            exit $DEPLOY_EXIT_CODE
+          ENDSSH
+
+      - name: Verify deployment
+        run: |
+          echo "🔍 Verifying deployment..."
+          sleep 10
+
+          # Health check against the production domain
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 15 https://api.catchy.fashion/health || echo "000")
+
+          if [ "$HTTP_CODE" = "200" ]; then
+            echo "✅ Application health check: HTTP $HTTP_CODE"
+          elif [ "$HTTP_CODE" = "000" ]; then
+            echo "⚠️  Could not reach https://api.catchy.fashion/health (DNS or SSL may still be propagating)"
+          else
+            echo "⚠️  Application health check returned: HTTP $HTTP_CODE"
+          fi
+
+          # Show final container status on VPS
+          ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 root@${{ secrets.VPS_IP }} << 'ENDSSH'
+            echo ""
+            echo "=========================================="
+            echo "Final Container Status"
+            echo "=========================================="
+            APP_DIR="/var/www/catchy-backend"
+            if [ -f "$APP_DIR/docker-compose.prod.yml" ]; then
+              cd "$APP_DIR"
+              docker compose -f docker-compose.prod.yml ps || true
+              echo ""
+              echo "=========================================="
+              echo "Recent Logs (last 20 lines)"
+              echo "=========================================="
+              docker compose -f docker-compose.prod.yml logs --tail=20 api || true
+            else
+              echo "⚠️  docker-compose.prod.yml not found"
+              ls -la "$APP_DIR/" || true
+            fi
+          ENDSSH
+
+      - name: Deployment status
+        if: always()
+        run: |
+          echo "=========================================="
+          echo "📊 Deployment Summary"
+          echo "=========================================="
+          echo "Repository: ${{ github.repository }}"
+          echo "Branch: ${{ github.event.inputs.branch || github.ref_name }}"
+          echo "Commit: ${{ github.sha }}"
+          echo "Triggered by: ${{ github.actor }}"
+          echo "Time: $(date -u +'%Y-%m-%d %H:%M:%S UTC')"
+          echo "=========================================="
