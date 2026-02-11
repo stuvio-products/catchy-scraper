@@ -41,6 +41,14 @@ else
     fi
 fi
 
+# Check for stale .env (root cause of migration failure)
+if grep -q "postgres:" .env && grep -q "catchy_admin:" .env.example; then
+    warn "Detected stale DATABASE_URL (user 'postgres') in .env. Updating from .env.example..."
+    cp .env .env.bak
+    cp .env.example .env
+    log "✅ .env updated (backup saved to .env.bak). Now using correct 'catchy_admin' credentials."
+fi
+
 # ─── 2. Setup Network ────────────────────────────────────────────────────────
 if ! docker network ls | grep -q "$NETWORK_NAME"; then
     log "Creating network '$NETWORK_NAME'..."
