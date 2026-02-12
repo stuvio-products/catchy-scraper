@@ -115,7 +115,7 @@ export class ProductSaveService {
         return;
       }
 
-      const textToEmbed = `${product.title} ${product.description || ''} ${product.brand || ''} ${product.category || ''}`;
+      const textToEmbed = `${product.title}`;
       const embedding = await this.gemini.generateEmbedding(textToEmbed);
       const vectorString = `[${embedding.join(',')}]`;
 
@@ -129,6 +129,43 @@ export class ProductSaveService {
     } catch (error) {
       this.logger.error(
         `Failed to generate embedding for ${productUrl}: ${error.message}`,
+      );
+    }
+  }
+
+  /**
+   * Link products to a query via the ProductQuery join table.
+   * Idempotent: uses ON CONFLICT DO NOTHING for concurrent safety.
+   */
+  async linkProductsToQuery(
+    productIds: string[],
+    queryHash: string,
+    retailer: string,
+    pageFound: number,
+  ): Promise<void> {
+    if (productIds.length === 0) return;
+
+    // Build VALUES clause for bulk insert
+    const values = productIds
+      .map(
+        (id, index) =>
+          `('${id}'::uuid, '${queryHash}', '${retailer}', ${pageFound}, ${index}, NOW())`,
+      )
+      .join(',\n');
+
+    try {
+      await this.prisma.client.$executeRawUnsafe(`
+        INSERT INTO product_queries (product_id, query_hash, retailer, page_found, rank, created_at)
+        VALUES ${values}
+        ON CONFLICT (product_id, query_hash, retailer) DO NOTHING
+      `);
+
+      this.logger.log(
+        `Linked ${productIds.length} products to query ${queryHash} (page ${pageFound})`,
+      );
+    } catch (error) {
+      this.logger.error(
+        `Failed to link products to query ${queryHash}: ${error.message}`,
       );
     }
   }

@@ -19,7 +19,8 @@ export interface IntentConfidence {
 }
 
 export interface SearchIntent {
-  normalizedQuery: string;
+  rawQuery: string; // Exact user-typed query, never modified
+  normalizedQuery: string; // Core search terms WITH attributes (color, material), only price/filter syntax removed
   filters: IntentFilters;
   confidence: IntentConfidence;
 }
@@ -50,9 +51,17 @@ export class IntentParserService {
     - brand (string)
     - retailer (string)
 
+    CRITICAL RULE for normalizedQuery:
+    - KEEP all descriptive words like colors, materials, styles in normalizedQuery.
+    - ONLY remove pure filter syntax like "under 1000", "above 500", "below 200".
+    - "white shirt under 1000" -> normalizedQuery = "white shirt" (NOT "shirt")
+    - "red nike shoes" -> normalizedQuery = "red nike shoes"
+    - "blue cotton dress below 2000" -> normalizedQuery = "blue cotton dress"
+    - The normalizedQuery MUST be usable as a retailer search query as-is.
+
     Return JSON strictly matching this structure:
     {
-      "normalizedQuery": "string (core search terms without filter words)",
+      "normalizedQuery": "string (full search terms WITH attributes like color/material, only price syntax removed)",
       "filters": { ... },
       "confidence": {
         "price": 0.0-1.0,
@@ -67,7 +76,7 @@ export class IntentParserService {
     Query: "white shirt under 1000"
     Result:
     {
-      "normalizedQuery": "shirt",
+      "normalizedQuery": "white shirt",
       "filters": { "color": "white", "priceMax": 1000, "category": "shirt" },
       "confidence": { "price": 0.95, "color": 0.9, "category": 0.9, "overall": 0.92 }
     }
@@ -97,6 +106,7 @@ export class IntentParserService {
       const parsed = JSON.parse(cleanJson);
 
       return {
+        rawQuery: query,
         normalizedQuery: parsed.normalizedQuery || query,
         filters: parsed.filters || {},
         confidence: {
@@ -111,6 +121,7 @@ export class IntentParserService {
       this.logger.error(`Intent parsing failed for "${query}": ${e.message}`);
       // Fallback: raw query, no filters, low confidence
       return {
+        rawQuery: query,
         normalizedQuery: query,
         filters: {},
         confidence: { overall: 0.5 },

@@ -9,6 +9,7 @@ import { ScrapeLockService } from '@/shared/scraping/services/scrape-lock.servic
 import { PrismaService } from '@/shared/prisma/prisma.service';
 import { ScrapStatus, ScrapeState } from '@prisma/client';
 import { ParserService } from '@/shared/scraping/services/parser.service';
+import { getEnumKeyAsType } from '@/shared/lib/util';
 
 @Processor(QUEUE_NAMES.PRODUCT_DETAIL_QUEUE)
 export class ProductDetailProcessor extends WorkerHost {
@@ -66,7 +67,13 @@ export class ProductDetailProcessor extends WorkerHost {
           }
 
           // Mark as IN_PROGRESS
-          await this.updateScrapeState(productId, ScrapeState.IN_PROGRESS);
+          await this.updateScrapeState(
+            productId,
+            getEnumKeyAsType(
+              ScrapeState,
+              ScrapeState.IN_PROGRESS,
+            ) as ScrapeState,
+          );
         }
 
         try {
@@ -89,7 +96,10 @@ export class ProductDetailProcessor extends WorkerHost {
 
               await this.productSaveService.upsertProducts(
                 [parsedProduct],
-                ScrapStatus.DETAILED,
+                getEnumKeyAsType(
+                  ScrapStatus,
+                  ScrapStatus.DETAILED,
+                ) as ScrapStatus,
               );
 
               await this.productSaveService.generateAndSaveEmbedding(url);
@@ -99,7 +109,10 @@ export class ProductDetailProcessor extends WorkerHost {
                 await this.prisma.client.product.update({
                   where: { id: productId },
                   data: {
-                    scrapeState: ScrapeState.IDLE,
+                    scrapeState: getEnumKeyAsType(
+                      ScrapeState,
+                      ScrapeState.IDLE,
+                    ) as ScrapeState,
                     lastDetailedScrapedAt: new Date(),
                     lastScrapeAttemptAt: new Date(),
                   },
@@ -114,7 +127,10 @@ export class ProductDetailProcessor extends WorkerHost {
               this.logger.warn(`Failed to parse details for ${url}`);
               await this.productSaveService.updateScrapStatus(
                 url,
-                ScrapStatus.DETAILED,
+                getEnumKeyAsType(
+                  ScrapStatus,
+                  ScrapStatus.DETAILED,
+                ) as ScrapStatus,
               );
 
               if (productId) {
@@ -140,7 +156,10 @@ export class ProductDetailProcessor extends WorkerHost {
           this.logger.error(`Error processing ${url}: ${error.message}`);
 
           if (productId) {
-            await this.updateScrapeState(productId, ScrapeState.FAILED);
+            await this.updateScrapeState(
+              productId,
+              getEnumKeyAsType(ScrapeState, ScrapeState.FAILED) as ScrapeState,
+            );
           }
 
           // Smart retry delays based on HTTP status codes
@@ -186,7 +205,7 @@ export class ProductDetailProcessor extends WorkerHost {
       await this.prisma.client.product.update({
         where: { id: productId },
         data: {
-          scrapeState: state,
+          scrapeState: getEnumKeyAsType(ScrapeState, state) as ScrapeState,
           lastScrapeAttemptAt: new Date(),
         },
       });

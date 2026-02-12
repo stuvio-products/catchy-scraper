@@ -5,6 +5,8 @@ export interface ScrapeJob {
   options?: Record<string, any>;
   createdAt: Date;
   attempts?: number;
+  queryHash?: string; // to update CrawlProgress after completion
+  pageNumber?: number; // page number that was scraped
 }
 
 export interface JobResult {

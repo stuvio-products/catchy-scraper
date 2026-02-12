@@ -9,6 +9,8 @@ import { ScraperService } from './services/scraper.service';
 import { ProductSaveService } from './services/product-save.service';
 import { ScraperTelemetryService } from './services/scraper-telemetry.service';
 import { ScrapeLockService } from './services/scrape-lock.service';
+import { CrawlProgressService } from './services/crawl-progress.service';
+import { ChatCursorService } from './services/chat-cursor.service';
 import { DomainModule } from '../domain/domain.module';
 import { BrowserModule } from '../browser/browser.module';
 import { PrismaModule } from '../prisma/prisma.module';
@@ -25,6 +27,8 @@ import { GeminiModule } from '../gemini/gemini.module';
     ProductSaveService,
     ScraperTelemetryService,
     ScrapeLockService,
+    CrawlProgressService,
+    ChatCursorService,
   ],
   exports: [
     FetchScraper,
@@ -35,6 +39,8 @@ import { GeminiModule } from '../gemini/gemini.module';
     ProductSaveService,
     ScraperTelemetryService,
     ScrapeLockService,
+    CrawlProgressService,
+    ChatCursorService,
   ],
 })
 export class ScrapingModule {}

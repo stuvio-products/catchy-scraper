@@ -86,22 +86,71 @@ export class ParserService {
     const $ = cheerio.load(htmlContent);
 
     try {
-      const name = $('span.B_NuE_').text().trim() || $('h1').text().trim();
-      const priceText = $('.Nx943j').text() || $('div.ihv79b').text();
-      const price = parseInt(priceText.replace(/[₹,]/g, ''), 10);
+      // 1. Title & Brand (New UI selectors + fallbacks)
+      const name =
+        $('.v1zwn21j.v1zwn27').first().text().trim() ||
+        $('span.B_NuE_').text().trim() ||
+        $('h1').text().trim();
 
+      const brand =
+        name.split(' ')[0] ||
+        $('span.G6uB6K').text().trim() ||
+        $('span.BYB4H5').text().trim();
+
+      // 2. Price
+      const priceText =
+        $('.v1zwn21j.v1zwn2c').text() ||
+        $('.Nx943j').text() ||
+        $('div.ihv79b').text();
+      const price = priceText
+        ? parseInt(priceText.replace(/[^\d]/g, ''), 10)
+        : NaN;
+
+      // 3. Images (Collect high-res versions)
       const images: string[] = [];
-      $('img').each((_, img) => {
-        const src = $(img).attr('src');
-        if (src && src.includes('/image/') && !images.includes(src)) {
-          images.push(src);
+      $('img').each((_, el) => {
+        const src = $(el).attr('src');
+        if (src) {
+          if (src.includes('rukminim')) {
+            // Transform thumbnail URL to high-res
+            images.push(src.replace('/80/80/', '/800/1000/'));
+          } else if (src.includes('/image/') && !images.includes(src)) {
+            images.push(src);
+          }
         }
       });
 
+      // 4. Color & Size extraction
+      const color: string[] = [];
+      const lowerName = name.toLowerCase();
+      const commonColors = [
+        'Green',
+        'Pink',
+        'Black',
+        'White',
+        'Blue',
+        'Red',
+        'Yellow',
+        'Grey',
+        'Brown',
+        'Silver',
+        'Gold',
+      ];
+      commonColors.forEach((c) => {
+        if (lowerName.includes(c.toLowerCase())) color.push(c);
+      });
+
+      const size: string[] = [];
+      $('li._3V2wNx, .size-selector-item').each((_, el) => {
+        const s = $(el).text().trim();
+        if (s) size.push(s);
+      });
+
+      // 5. Description
       const description =
-        $('.yN\\+eNk').text().trim() || $('.R91_0J').text().trim();
-      const brand =
-        $('span.G6uB6K').text().trim() || $('span.BYB4H5').text().trim();
+        $('.v1zwn257.v1zwn2c').text().trim() ||
+        $('.yN\\+eNk').text().trim() ||
+        $('.R91_0J').text().trim();
 
       if (!name) return null;
 
@@ -109,9 +158,12 @@ export class ParserService {
         productName: name,
         productUrl: '', // Will be filled by processor
         price: isNaN(price) ? undefined : price,
-        images: images.slice(0, 10),
+        images: [...new Set(images)].slice(0, 10),
         brand,
         description,
+        color: color.length > 0 ? color : undefined,
+        size: size.length > 0 ? size : undefined,
+        inStock: !htmlContent.toLowerCase().includes('out of stock'),
         retailer: 'flipkart',
       };
     } catch (e) {
@@ -416,6 +468,11 @@ export class ParserService {
       const thumbnail = linkElem.find('img').first().attr('src');
       if (!thumbnail) return;
 
+      // Transform thumbnail to high-res if it's from Flipkart CDN
+      const highResImage = thumbnail.includes('rukminim')
+        ? thumbnail.replace(/\/\d+\/\d+\//, '/800/1000/')
+        : thumbnail;
+
       // Extract product name (from img alt or other a link title)
       let name = linkElem.find('img').first().attr('alt') || '';
 
@@ -473,7 +530,7 @@ export class ParserService {
         productName: name || 'Product',
         productUrl: href,
         price: current_price,
-        images: [thumbnail],
+        images: [highResImage],
         retailer: 'flipkart',
       });
     });

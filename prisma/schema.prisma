@@ -30,6 +30,13 @@ enum ScrapeState {
   FAILED      @map("failed")
 }
 
+enum CrawlStatus {
+  IDLE        @map("idle")
+  IN_PROGRESS @map("in_progress")
+  COMPLETED   @map("completed")
+  FAILED      @map("failed")
+}
+
 model User {
   id String @id @default(uuid())
 
@@ -115,6 +122,7 @@ model Product {
   createdAt    DateTime                     @default(now()) @map("created_at")
   updatedAt    DateTime                     @updatedAt @map("updated_at")
   savedIn      SavedProduct[]
+  queries      ProductQuery[]
 
   @@index([category])
   @@index([brand])
@@ -133,6 +141,7 @@ model Chat {
 
   messages Message[]
   state    ChatState?
+  cursors  ChatCursor[]
 
   @@map("chats")
 }
@@ -230,4 +239,52 @@ model Otp {
   @@map("otps")
 }
 
+model CrawlProgress {
+  id              String      @id @default(uuid()) @db.Uuid
+  retailer        String
+  normalizedQuery String      @map("normalized_query")
+  queryHash       String      @map("query_hash")
+  lastPage        Int         @default(0) @map("last_page")
+  scrollOffset    Int         @default(0) @map("scroll_offset")
+  cursorToken     String?     @map("cursor_token")
+  status          CrawlStatus @default(IDLE)
+  totalProducts   Int         @default(0) @map("total_products")
+  exhausted       Boolean     @default(false)
+  lastCrawledAt   DateTime?   @map("last_crawled_at")
+  createdAt       DateTime    @default(now()) @map("created_at")
+  updatedAt       DateTime    @updatedAt @map("updated_at")
 
+  @@unique([retailer, queryHash])
+  @@index([queryHash])
+  @@map("crawl_progress")
+}
+
+model ChatCursor {
+  id        String   @id @default(uuid()) @db.Uuid
+  chatId    String   @map("chat_id") @db.Uuid
+  queryHash String   @map("query_hash")
+  retailer  String
+  offset    Int      @default(0)
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  chat Chat @relation(fields: [chatId], references: [id], onDelete: Cascade)
+
+  @@unique([chatId, queryHash, retailer])
+  @@index([chatId])
+  @@map("chat_cursors")
+}
+
+model ProductQuery {
+  productId String   @map("product_id") @db.Uuid
+  queryHash String   @map("query_hash")
+  retailer  String
+  pageFound Int      @default(1) @map("page_found")
+  rank      Int      @default(0)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@id([productId, queryHash, retailer])
+  @@index([queryHash, retailer])
+  @@map("product_queries")
+}

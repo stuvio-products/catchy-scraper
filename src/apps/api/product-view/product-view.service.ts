@@ -9,6 +9,7 @@ import { ScrapeLockService } from '@/shared/scraping/services/scrape-lock.servic
 import { QUEUE_NAMES } from '@/shared/queue/queue.constants';
 import { ProductDetailJob } from '@/shared/queue/interfaces/product-detail-job.interface';
 import { ScrapStatus, ScrapeState } from '@prisma/client';
+import { getEnumKeyAsType } from '@/shared/lib/util';
 
 /** 24 hours in milliseconds */
 const CACHE_FRESHNESS_MS = 24 * 60 * 60 * 1000;
@@ -64,7 +65,8 @@ export class ProductViewService {
 
     // ── Check if detailed data is fresh (< 24h) ──
     if (
-      product.scrapStatus === ScrapStatus.DETAILED &&
+      product.scrapStatus ===
+        getEnumKeyAsType(ScrapStatus, ScrapStatus.DETAILED) &&
       product.lastDetailedScrapedAt &&
       Date.now() - product.lastDetailedScrapedAt.getTime() < CACHE_FRESHNESS_MS
     ) {
@@ -75,7 +77,10 @@ export class ProductViewService {
     }
 
     // ── Check if scrape is already in progress ──
-    if (product.scrapeState === ScrapeState.IN_PROGRESS) {
+    if (
+      product.scrapeState ===
+      getEnumKeyAsType(ScrapeState, ScrapeState.IN_PROGRESS)
+    ) {
       this.logger.debug(
         `Product ${productId} scrape already in progress — returning current data`,
       );
@@ -100,7 +105,10 @@ export class ProductViewService {
     }
 
     // ── Mark as IN_PROGRESS ──
-    await this.updateScrapeState(productId, ScrapeState.IN_PROGRESS);
+    await this.updateScrapeState(
+      productId,
+      getEnumKeyAsType(ScrapeState, ScrapeState.IN_PROGRESS) as ScrapeState,
+    );
 
     // ── Route by retailer strategy ──
     if ((FETCH_RETAILERS as readonly string[]).includes(retailer)) {
@@ -180,7 +188,10 @@ export class ProductViewService {
         !result.data
       ) {
         this.logger.warn(`Inline scrape failed/timed out for ${url}`);
-        await this.updateScrapeState(productId, ScrapeState.FAILED);
+        await this.updateScrapeState(
+          productId,
+          getEnumKeyAsType(ScrapeState, ScrapeState.FAILED) as ScrapeState,
+        );
         await this.scrapeLock.releaseLock(productId);
         return;
       }
@@ -192,7 +203,10 @@ export class ProductViewService {
 
       if (!parsed) {
         this.logger.warn(`Parse failed for ${url}`);
-        await this.updateScrapeState(productId, ScrapeState.FAILED);
+        await this.updateScrapeState(
+          productId,
+          getEnumKeyAsType(ScrapeState, ScrapeState.FAILED) as ScrapeState,
+        );
         await this.scrapeLock.releaseLock(productId);
         return;
       }
@@ -201,14 +215,17 @@ export class ProductViewService {
       parsed.productUrl = url;
       await this.productSaveService.upsertProducts(
         [parsed],
-        ScrapStatus.DETAILED,
+        getEnumKeyAsType(ScrapStatus, ScrapStatus.DETAILED) as ScrapStatus,
       );
 
       // Update state to IDLE + mark detailed timestamp
       await this.prisma.client.product.update({
         where: { id: productId },
         data: {
-          scrapeState: ScrapeState.IDLE,
+          scrapeState: getEnumKeyAsType(
+            ScrapeState,
+            ScrapeState.IDLE,
+          ) as ScrapeState,
           lastDetailedScrapedAt: new Date(),
           lastScrapeAttemptAt: new Date(),
         },
@@ -226,7 +243,10 @@ export class ProductViewService {
       this.logger.error(
         `Inline scrape error for ${productId}: ${error.message}`,
       );
-      await this.updateScrapeState(productId, ScrapeState.FAILED);
+      await this.updateScrapeState(
+        productId,
+        getEnumKeyAsType(ScrapeState, ScrapeState.FAILED) as ScrapeState,
+      );
     } finally {
       await this.scrapeLock.releaseLock(productId);
     }
@@ -262,7 +282,10 @@ export class ProductViewService {
       this.logger.error(
         `Failed to enqueue browser scrape for ${productId}: ${error.message}`,
       );
-      await this.updateScrapeState(productId, ScrapeState.FAILED);
+      await this.updateScrapeState(
+        productId,
+        getEnumKeyAsType(ScrapeState, ScrapeState.FAILED) as ScrapeState,
+      );
       await this.scrapeLock.releaseLock(productId);
     }
   }
@@ -278,7 +301,7 @@ export class ProductViewService {
       await this.prisma.client.product.update({
         where: { id: productId },
         data: {
-          scrapeState: state,
+          scrapeState: getEnumKeyAsType(ScrapeState, state) as ScrapeState,
           lastScrapeAttemptAt: new Date(),
         },
       });

@@ -1,4 +1,4 @@
-import { Injectable, OnModuleInit, Inject, forwardRef } from '@nestjs/common';
+import { Injectable, Inject, forwardRef } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { QUEUE_NAMES, JOB_PRIORITIES } from '@/shared/queue/queue.constants';
@@ -9,11 +9,12 @@ import { PrismaService } from '@/shared/prisma/prisma.service';
 import { GeminiService } from '@/shared/gemini/gemini.service';
 import { ParserService } from '@/shared/scraping/services/parser.service';
 import { ProductSaveService } from '@/shared/scraping/services/product-save.service';
+import { CrawlProgressService } from '@/shared/scraping/services/crawl-progress.service';
 import { BrowserClientScraper } from '@/shared/scraping/scrapers/browser-client.scraper';
 import { ScrapStatus, MessageRole } from '@prisma/client';
 import { getEnumKeyAsType } from '@/shared/lib/util';
 import { ChatService } from '@/apps/api/chat/chat.service';
-import { randomUUID } from 'crypto';
+import { randomUUID, createHash } from 'crypto';
 import { ParsedProduct } from '@/shared/scraping/interfaces/parsed-product.interface';
 import {
   IntentParserService,
@@ -45,23 +46,13 @@ interface CountResult {
   count: bigint;
 }
 
-/** Cursor for keyset pagination: (similarity_score, product_id) */
-export interface SearchCursor {
-  score: number;
-  id: string;
-}
-
 interface EmbeddingCacheEntry {
   embedding: number[];
   timestamp: number;
   accessCount: number;
 }
 
-interface ScrapeTrackingKey {
-  query: string;
-  retailer: string;
-  page: number;
-}
+// ScrapeTrackingKey removed — scrape tracking is now in CrawlProgress DB table
 
 // ============================================================================
 // CONSTANTS
@@ -152,7 +143,7 @@ class LRUCache<K, V> {
 // ============================================================================
 
 @Injectable()
-export class SearchService implements OnModuleInit {
+export class SearchService {
   private readonly logger = new Logger(SearchService.name);
 
   // LRU-based embedding cache
@@ -163,9 +154,6 @@ export class SearchService implements OnModuleInit {
   // Track in-flight embedding requests to prevent concurrent generation
   private readonly embeddingInflight = new Map<string, Promise<number[]>>();
 
-  // Track scraped pages per query/retailer to prevent duplicates
-  private readonly scrapeTracking = new Map<string, Set<number>>();
-
   constructor(
     @InjectQueue(QUEUE_NAMES.SCRAPE_QUEUE)
     private scrapeQueue: Queue<ScrapeJob>,
@@ -174,19 +162,12 @@ export class SearchService implements OnModuleInit {
     private readonly geminiService: GeminiService,
     private readonly parserService: ParserService,
     private readonly productSaveService: ProductSaveService,
+    private readonly crawlProgressService: CrawlProgressService,
     @Inject(forwardRef(() => ChatService))
     private readonly chatService: ChatService,
     private readonly browserClientScraper: BrowserClientScraper,
     private readonly intentParserService: IntentParserService,
   ) {}
-
-  async onModuleInit() {
-    // Periodic cleanup of scrape tracking
-    setInterval(() => {
-      this.scrapeTracking.clear();
-      this.logger.debug('Cleared scrape tracking cache');
-    }, SEARCH_CONSTANTS.SCRAPE_LOCK_TTL_MS);
-  }
 
   // ==========================================================================
   // PUBLIC API
@@ -207,29 +188,25 @@ export class SearchService implements OnModuleInit {
     // 1. Parse Intent & Confidence
     const intent = await this.intentParserService.parseSearchIntent(query);
 
-    // 2. Merge Explicit Filters (override intent)
+    // 2. Merge Explicit Filters (override intent) — these are for DB filtering only, NOT retailer URLs
     const finalFilters = { ...intent.filters, ...explicitFilters };
 
-    // 3. Create Chat Session
+    // 3. Create Chat Session — store the RAW user query, not normalized
+    //    This ensures chat UI reflects exactly what the user typed
     const chat = await this.chatService.createChat(
       userId,
-      query,
+      query, // <-- raw query, not intent.normalizedQuery
       finalFilters,
       intent.confidence,
       'SEARCH',
     );
 
-    // 3.1 Persist Initial User Message
-    await this.chatService.addMessage(chat.id, MessageRole.USER, query);
+    // Note: createChat already persists the initial user message via repository
 
-    // 4. Generate Embedding for Normalized Query
-    const embedding = await this.getOrGenerateEmbedding(intent.normalizedQuery);
+    // 4. Generate Embedding for the full query (with attributes) for later similarity expansion
+    const embedding = await this.getOrGenerateEmbedding(query);
 
-    // 5. Initial DB Search (Check for existence)
-    // We use a simplified version of searchWithState logic here just to check counts/existence
-    // But for efficiency, we can just defer to the client calling /results.
-    // However, the requirement says we must trigger scraping logic HERE.
-
+    // 5. Check if products already exist in DB
     const hasResults = await this.checkProductExistence(
       embedding,
       finalFilters,
@@ -240,13 +217,8 @@ export class SearchService implements OnModuleInit {
 
     if (hasResults) {
       this.logger.log(
-        `Products found in DB for "${intent.normalizedQuery}". Enqueuing detailed checks.`,
+        `Products found in DB for "${query}". Enqueuing detailed checks.`,
       );
-      // Enqueue detailed scraping for top results if needed (lazy)
-      // We can do this by briefly fetching IDs and status, but let's trust the
-      // pagination endpoint to handle the "lazy scrape" when the user actually views them.
-      // EXCEPT: Requirement says "Check scrapeStatus -> Enqueue DETAILED".
-      // So we should run a lightweight query to get top N items and trigger updates.
       await this.triggerRefreshesForTopResults(
         embedding,
         finalFilters,
@@ -254,121 +226,231 @@ export class SearchService implements OnModuleInit {
       );
     } else {
       this.logger.log(
-        `No products in DB for "${intent.normalizedQuery}". Triggering LIVE search.`,
+        `No products in DB for "${query}". Triggering LIVE search.`,
       );
-      // Trigger Live Scrape & Persist
-      await this.scrapeLiveAndPersist(intent.normalizedQuery);
+      // Trigger Live Scrape using the RAW user query — retailers should get "white shirt", not "shirt"
+      await this.scrapeLiveAndPersist(query);
       message = 'I found some new products for you from live search.';
     }
 
     // 6. Persist Assistant Message (AI Response)
-    await this.chatService.addMessage(chat.id, MessageRole.ASSISTANT, message);
+    await this.chatService.addMessage(
+      chat.id,
+      getEnumKeyAsType(MessageRole, MessageRole.ASSISTANT) as MessageRole,
+      message,
+    );
 
     return { chatId: chat.id, message };
   }
 
   /**
    * Pagination & Result Retrieval (for ChatController)
+   *
+   * Cursor format: "score:id" composite string (e.g. "0.7230:cc164cd0-...")
+   * pgvector-correct: WHERE (sim < :score) OR (sim = :score AND id > :id)
    */
   async searchWithState(
     chatState: ChatState,
     limit: number = SEARCH_CONSTANTS.RESULTS_PER_PAGE,
-    cursor?: SearchCursor,
+    cursor?: string,
   ) {
     const state = chatState as any;
-    const { currentQuery, filters, intentConfidence, lastEmbedding } = state;
+    const { currentQuery, filters, intentConfidence } = state;
 
     if (!currentQuery) {
       throw new Error('Chat state missing query');
     }
-    // Note: lastEmbedding is Unsupported type, so it won't be in the JS object.
-    // The SQL query joins chat_state directly to use it.
-
-    // Parse vector from string if needed, or use raw if Prisma supports it directly
-    // Prisma vector objects usually need formatting.
-    // BUT check schema: lastEmbedding is Unsupported("vector(1536)")
-    // We need to cast it in raw SQL.
-
-    // For the SQL query, we need to pass the vector.
-    // Since we can't easily read Unsupported types back into JS arrays without some hack,
-    // we should ideally store the embedding in a cache or regenerate it if missing.
-    // However, the requirement says "Do NOT regenerate embeddings".
-    // We can use the `last_embedding` column directly in SQL without bringing it to JS!
 
     const confidence = (intentConfidence as any)?.overall ?? 0.5;
     const typedFilters = (filters as any) ?? {};
+    const isFirstPage = !cursor;
+    const safeLimit = Number(limit) || 20;
 
-    // Determine strictness
-    const useStrictFilters = confidence >= 0.75;
+    // ======================================================================
+    // FIRST PAGE: Lexical/keyword search — respects exact user intent
+    // Uses OR logic across multiple text fields to avoid over-filtering.
+    // Products scraped for "white shirt" may have "white" only in color
+    // attribute, not in title — so we match ANY word in ANY text field.
+    // ======================================================================
+    if (isFirstPage) {
+      // Build keyword search terms from the raw query
+      const queryWords = currentQuery
+        .toLowerCase()
+        .trim()
+        .split(/\s+/)
+        .filter((w: string) => w.length > 1);
 
-    // Build Filter Clause
-    let filterClause = '';
-    const params: any[] = [];
+      // OR logic across title + description + brand + category + color + style_tags
+      // Each word can match in ANY field — a product matching more words ranks higher
+      let titleFilter = '';
+      let matchScoreExpr = '0';
+      if (queryWords.length > 0) {
+        const wordConditions = queryWords.map((word: string) => {
+          const escaped = word.replace(/'/g, "''");
+          return `(
+            p.title ILIKE '%${escaped}%' 
+            OR p.description ILIKE '%${escaped}%' 
+            OR p.brand ILIKE '%${escaped}%' 
+            OR p.category ILIKE '%${escaped}%'
+            OR EXISTS (SELECT 1 FROM unnest(p.color) col WHERE col ILIKE '%${escaped}%')
+            OR EXISTS (SELECT 1 FROM unnest(p.style_tags) tag WHERE tag ILIKE '%${escaped}%')
+          )`;
+        });
+        // Product must match ALL words (each word can be in any field)
+        titleFilter = `AND (${wordConditions.join(' AND ')})`;
 
-    if (useStrictFilters) {
-      if (typedFilters.brand)
-        filterClause += ` AND p.brand ILIKE '%${typedFilters.brand}%'`;
-      if (typedFilters.category)
-        filterClause += ` AND p.category ILIKE '%${typedFilters.category}%'`;
-      if (typedFilters.priceMin)
-        filterClause += ` AND p.price >= ${typedFilters.priceMin}`;
-      if (typedFilters.priceMax)
-        filterClause += ` AND p.price <= ${typedFilters.priceMax}`;
-      if (typedFilters.color)
-        filterClause += ` AND '${typedFilters.color}' = ANY(p.color)`;
-    }
+        // Score: count how many query words match (for ranking)
+        const scoreTerms = queryWords.map((word: string) => {
+          const escaped = word.replace(/'/g, "''");
+          return `CASE WHEN 
+            p.title ILIKE '%${escaped}%' 
+            OR p.description ILIKE '%${escaped}%' 
+            OR p.brand ILIKE '%${escaped}%' 
+            OR p.category ILIKE '%${escaped}%'
+            OR EXISTS (SELECT 1 FROM unnest(p.color) col WHERE col ILIKE '%${escaped}%')
+            OR EXISTS (SELECT 1 FROM unnest(p.style_tags) tag WHERE tag ILIKE '%${escaped}%')
+          THEN 1 ELSE 0 END`;
+        });
+        matchScoreExpr = scoreTerms.join(' + ');
+      }
 
-    // Cursor Clause
-    let cursorClause = '';
-    if (cursor) {
-      cursorClause = ` AND (
-        (1 - (p.embedding <=> cs.last_embedding)) < ${cursor.score}
-        OR (
-          (1 - (p.embedding <=> cs.last_embedding)) = ${cursor.score}
-          AND p.id > '${cursor.id}'::uuid
-        )
-      )`;
-    }
+      // Apply only hard price filters (no color/category DB filtering — let text match handle it)
+      let priceFilter = '';
+      const pMin = typedFilters.priceMin ?? typedFilters.price_min;
+      if (pMin != null && !isNaN(Number(pMin))) {
+        priceFilter += ` AND p.price >= ${Number(pMin)}`;
+      }
+      const pMax = typedFilters.priceMax ?? typedFilters.price_max;
+      if (pMax != null && !isNaN(Number(pMax))) {
+        priceFilter += ` AND p.price <= ${Number(pMax)}`;
+      }
 
-    const querySql = `
-      WITH scored_products AS (
-        SELECT 
-          p.id, p.title, p.description, p.brand, p.category, p.price, 
-          p.product_url AS "productUrl", p.images, p.retailer, 
+      // Compute queryHash to scope results to products scraped for THIS query
+      const queryHash = this.computeQueryHash(currentQuery);
+
+      const lexicalSql = `
+        SELECT
+          p.id, p.title, p.description, p.brand, p.category, p.price,
+          p.product_url AS "productUrl", p.images, p.retailer,
           p.scrap_status AS "scrapStatus", p.last_scraped AS "lastScraped",
-          1 - (p.embedding <=> cs.last_embedding) as similarity,
-          COUNT(*) OVER() as total_count
+          1.0 AS similarity, -- Force max similarity so Page 2 starts embedding search from top
+          (${matchScoreExpr}) AS match_score,
+          COUNT(*) OVER() AS total_count
         FROM products p
-        JOIN chat_state cs ON cs.chat_id = '${chatState.chatId}'::uuid
-        WHERE p.embedding IS NOT NULL
-        ${filterClause}
-        ${cursorClause}
-      )
-      SELECT * FROM scored_products
-      ORDER BY similarity DESC, id ASC
-      LIMIT ${limit}
+        INNER JOIN product_queries pq ON pq.product_id = p.id AND pq.query_hash = '${queryHash}'
+        WHERE 1=1
+        ${titleFilter}
+        ${priceFilter}
+        ORDER BY match_score DESC, pq.page_found ASC, pq.rank ASC, p.id ASC
+        LIMIT ${safeLimit}
+      `;
+
+      this.logger.log(
+        `[LEXICAL] First page query for "${currentQuery}": ${lexicalSql.replace(/\s+/g, ' ').trim().substring(0, 200)}...`,
+      );
+
+      const searchResults =
+        await this.prisma.client.$queryRawUnsafe<
+          Array<ProductSearchResult & { total_count: bigint }>
+        >(lexicalSql);
+
+      this.logger.log(
+        `[LEXICAL] ${searchResults.length} results for "${currentQuery}" (first page, no cursor)`,
+      );
+
+      return this.processSearchResults(
+        searchResults,
+        safeLimit,
+        currentQuery,
+        true,
+      );
+    }
+
+    // ======================================================================
+    // SUBSEQUENT PAGES: Embedding similarity — for discovery & expansion
+    // e.g. "white shirt" on page 2+ may show cream/off-white shirts
+    // ======================================================================
+
+    // Composite cursor: "score:id"
+    let cursorClause = '';
+    const sepIdx = cursor!.indexOf(':');
+    if (sepIdx > 0) {
+      const lastScore = Number(cursor!.substring(0, sepIdx));
+      const lastId = cursor!.substring(sepIdx + 1);
+      if (!isNaN(lastScore) && lastId) {
+        const simExpr = `CASE WHEN p.embedding IS NOT NULL AND cs.last_embedding IS NOT NULL THEN COALESCE(1 - (p.embedding <=> cs.last_embedding), 0) ELSE 0 END`;
+        cursorClause = ` AND (
+          (${simExpr}) < ${lastScore}
+          OR (
+            (${simExpr}) = ${lastScore}
+            AND p.id > '${lastId}'::uuid
+          )
+        )`;
+      }
+    }
+
+    // Only apply price filters on later pages, not color/category (embedding handles semantic match)
+    let priceFilter = '';
+    const pMin = typedFilters.priceMin ?? typedFilters.price_min;
+    if (pMin != null && !isNaN(Number(pMin))) {
+      priceFilter += ` AND p.price >= ${Number(pMin)}`;
+    }
+    const pMax = typedFilters.priceMax ?? typedFilters.price_max;
+    if (pMax != null && !isNaN(Number(pMax))) {
+      priceFilter += ` AND p.price <= ${Number(pMax)}`;
+    }
+
+    const embeddingSql = `
+      SELECT
+        p.id, p.title, p.description, p.brand, p.category, p.price,
+        p.product_url AS "productUrl", p.images, p.retailer,
+        p.scrap_status AS "scrapStatus", p.last_scraped AS "lastScraped",
+        CASE
+          WHEN p.embedding IS NOT NULL AND cs.last_embedding IS NOT NULL
+          THEN COALESCE(1 - (p.embedding <=> cs.last_embedding), 0)
+          ELSE 0
+        END AS similarity,
+        COUNT(*) OVER() AS total_count
+      FROM products p
+      CROSS JOIN chat_state cs
+      WHERE cs.chat_id = '${chatState.chatId}'::uuid
+      AND p.embedding IS NOT NULL
+      ${priceFilter}
+      ${cursorClause}
+      ORDER BY similarity DESC, p.id ASC
+      LIMIT ${safeLimit}
     `;
+
+    this.logger.log(
+      `[EMBEDDING] Later page query for "${currentQuery}" (cursor: ${cursor})`,
+    );
 
     const searchResults =
       await this.prisma.client.$queryRawUnsafe<
         Array<ProductSearchResult & { total_count: bigint }>
-      >(querySql);
+      >(embeddingSql);
 
-    // 6. Process Results (Format, Next Cursor, Lazy Scraping)
+    this.logger.log(
+      `[EMBEDDING] ${searchResults.length} results for "${currentQuery}" ` +
+        (searchResults.length > 0
+          ? `| scores: ${searchResults[0].similarity.toFixed(4)}..${searchResults[searchResults.length - 1].similarity.toFixed(4)}`
+          : ''),
+    );
+
     return this.processSearchResults(
       searchResults,
-      limit,
+      safeLimit,
       currentQuery,
-      !cursor, // isFirstPage if no cursor
+      false,
     );
   }
 
   // ==========================================================================
-  // HELPER METHOHDS
+  // HELPER METHODS
   // ==========================================================================
 
   /**
-   * Helper to process results (extracted from original triggerUnifiedSearch)
+   * Process results: format products, build composite cursor, trigger fallback
    */
   private async processSearchResults(
     searchResults: Array<ProductSearchResult & { total_count: bigint }>,
@@ -376,43 +458,39 @@ export class SearchService implements OnModuleInit {
     query: string,
     isFirstPage: boolean,
   ) {
-    let paginatedProducts = searchResults.map(
+    const paginatedProducts = searchResults.map(
       ({ total_count, ...product }) => ({
         ...product,
         productUrl: product.productUrl,
         scrapStatus: product.scrapStatus,
         lastScraped: product.lastScraped,
+        score: product.similarity,
       }),
     );
 
     const totalCount =
       searchResults.length > 0 ? Number(searchResults[0].total_count) : 0;
+
+    // Composite cursor: "score:id" — pgvector stable pagination
+    // Use totalCount (from COUNT(*) OVER()) to know if more rows exist beyond what LIMIT returned
     const lastResult = searchResults[searchResults.length - 1];
-    const nextCursor: SearchCursor | null =
-      searchResults.length >= limit && lastResult
-        ? { score: lastResult.similarity, id: String(lastResult.id) }
+    const nextCursor: string | null =
+      lastResult && totalCount > searchResults.length
+        ? `${lastResult.similarity}:${lastResult.id}`
         : null;
 
     if (paginatedProducts.length === 0 && isFirstPage) {
-      // Fallback: If DB is empty on first page, strictly trigger Live Search
       this.logger.log(
         `No products found via state search. Triggering live scrape fallback.`,
       );
 
-      // Perform live scraping from external sources (BASIC only)
       const allProducts = await this.scrapeLiveAndPersist(query);
-
-      // Return the newly scraped products (respecting limit)
       const sliced = allProducts.slice(0, limit);
-      const last = sliced[sliced.length - 1];
 
       return {
-        products: sliced,
+        products: sliced.map((p) => ({ ...p, score: p.score ?? null })),
         total: allProducts.length,
-        nextCursor:
-          allProducts.length > limit && last
-            ? { score: 0.99, id: String(last.id) }
-            : null,
+        nextCursor: null, // Live results have no embedding scores yet
         hasMore: allProducts.length > limit,
         limit,
       };
@@ -433,32 +511,39 @@ export class SearchService implements OnModuleInit {
   }
 
   /**
-   * Helper to strict/soft check existence
+   * Check if products matching this query exist in the DB.
+   * Uses embedding similarity — checks if any product has similarity >= 0.5
    */
   private async checkProductExistence(
     embedding: number[],
     filters: any,
     confidence: number,
   ): Promise<boolean> {
-    const useStrict = confidence >= 0.75;
+    const vectorString = `[${embedding.join(',')}]`;
 
-    let filterClause = '';
-    if (useStrict) {
-      if (filters.brand)
-        filterClause += ` AND brand ILIKE '%${filters.brand}%'`;
-      if (filters.category)
-        filterClause += ` AND category ILIKE '%${filters.category}%'`;
-      if (filters.priceMin) filterClause += ` AND price >= ${filters.priceMin}`;
-      if (filters.priceMax) filterClause += ` AND price <= ${filters.priceMax}`;
-      if (filters.color) filterClause += ` AND '${filters.color}' = ANY(color)`;
+    // Only apply price filters — don't filter by color/category/brand to avoid over-filtering
+    let priceFilter = '';
+    const pMin = filters.priceMin ?? filters.price_min;
+    if (pMin != null && !isNaN(Number(pMin))) {
+      priceFilter += ` AND price >= ${Number(pMin)}`;
+    }
+    const pMax = filters.priceMax ?? filters.price_max;
+    if (pMax != null && !isNaN(Number(pMax))) {
+      priceFilter += ` AND price <= ${Number(pMax)}`;
     }
 
     const result = await this.prisma.client.$queryRawUnsafe<any[]>(`
         SELECT 1 FROM products 
-        WHERE embedding IS NOT NULL 
-        ${filterClause}
+        WHERE embedding IS NOT NULL
+        AND (1 - (embedding <=> '${vectorString}'::vector)) >= 0.5
+        ${priceFilter}
         LIMIT 1
      `);
+
+    this.logger.log(
+      `checkProductExistence: ${result.length > 0 ? 'FOUND' : 'NONE'} matching products (confidence: ${confidence})`,
+    );
+
     return result.length > 0;
   }
 
@@ -558,152 +643,112 @@ export class SearchService implements OnModuleInit {
   // ==========================================================================
 
   /**
-   * Create tracking key for scrape operations
+   * Compute deterministic SHA-256 hash for a query string.
+   * Uses the mechanical normalizeQuery() (not LLM output) for consistency.
    */
-  private getScrapeTrackingKey(query: string, retailer: string): string {
-    return `${this.normalizeQuery(query)}:${retailer}`;
+  computeQueryHash(query: string): string {
+    return createHash('sha256')
+      .update(this.normalizeQuery(query))
+      .digest('hex');
   }
 
   /**
-   * Check if a specific page has been scraped for a query/retailer
+   * Background scrape multiple pages for all retailers with priority queuing.
+   * Now driven by CrawlProgress DB — only scrapes pages beyond lastPage.
+   * Public so ChatController can trigger when DB results are running low.
    */
-  private hasPageBeenScraped(
-    query: string,
-    retailer: string,
-    page: number,
-  ): boolean {
-    const key = this.getScrapeTrackingKey(query, retailer);
-    const pages = this.scrapeTracking.get(key);
-    return pages ? pages.has(page) : false;
-  }
-
-  /**
-   * Mark a page as scraped for a query/retailer
-   */
-  private markPageAsScraped(
-    query: string,
-    retailer: string,
-    page: number,
-  ): void {
-    const key = this.getScrapeTrackingKey(query, retailer);
-    if (!this.scrapeTracking.has(key)) {
-      this.scrapeTracking.set(key, new Set());
-    }
-    this.scrapeTracking.get(key)!.add(page);
-  }
-
-  /**
-   * Background scrape multiple pages for all retailers with priority queuing
-   */
-  private async backgroundScrapeNextPages(
+  async backgroundScrapeNextPages(
     query: string,
     startPage: number,
     endPage: number,
   ): Promise<void> {
+    const queryHash = this.computeQueryHash(query);
+    const normalizedQuery = this.normalizeQuery(query);
     const jobs: Promise<any>[] = [];
 
-    for (let page = startPage; page <= endPage; page++) {
-      // Myntra
-      if (!this.hasPageBeenScraped(query, RETAILERS.MYNTRA, page)) {
-        jobs.push(
-          this.scrapeQueue
-            .add(
-              'myntra-search',
-              {
-                jobId: `myntra-p${page}-${randomUUID()}`,
-                url: `https://www.myntra.com/${encodeURIComponent(query)}?rawQuery=${encodeURIComponent(query)}&p=${page}`,
-                domain: 'myntra.com',
-                options: { timeout: SEARCH_CONSTANTS.SCRAPE_TIMEOUT_MS },
-                createdAt: new Date(),
-              },
-              { priority: JOB_PRIORITIES.PREFETCH_PAGE },
-            )
-            .then(() => this.markPageAsScraped(query, RETAILERS.MYNTRA, page))
-            .catch((err) => {
-              this.logger.error(
-                `Failed to queue Myntra page ${page} for query "${query}": ${err.message}`,
-              );
-            }),
+    const allRetailers = [
+      {
+        name: RETAILERS.MYNTRA,
+        domain: 'myntra.com',
+        jobName: 'myntra-search',
+        buildUrl: (q: string, p: number) =>
+          `https://www.myntra.com/${encodeURIComponent(q)}?rawQuery=${encodeURIComponent(q)}&p=${p}`,
+      },
+      {
+        name: RETAILERS.FLIPKART,
+        domain: 'flipkart.com',
+        jobName: 'flipkart-search',
+        buildUrl: (q: string, p: number) =>
+          `https://www.flipkart.com/search?q=${encodeURIComponent(q)}&page=${p}`,
+      },
+      {
+        name: RETAILERS.MEESHO,
+        domain: 'meesho.com',
+        jobName: 'meesho-search',
+        buildUrl: (q: string, _p: number) =>
+          `https://www.meesho.com/search?q=${encodeURIComponent(q)}`,
+      },
+      {
+        name: RETAILERS.AMAZON,
+        domain: 'amazon.in',
+        jobName: 'amazon-search',
+        buildUrl: (q: string, p: number) =>
+          `https://www.amazon.in/s?k=${encodeURIComponent(q)}&page=${p}`,
+      },
+    ];
+
+    for (const retailer of allRetailers) {
+      // Check CrawlProgress to determine which pages need scraping
+      const progress = await this.crawlProgressService.getProgress(
+        retailer.name,
+        queryHash,
+      );
+      const lastScrapedPage = progress?.lastPage ?? 0;
+      const isExhausted = progress?.exhausted ?? false;
+      const isInProgress = progress?.status === 'IN_PROGRESS';
+
+      if (isExhausted || isInProgress) {
+        this.logger.debug(
+          `Skipping ${retailer.name} for "${query}" — ${isExhausted ? 'exhausted' : 'in progress'}`,
         );
+        continue;
       }
 
-      // Flipkart
-      if (!this.hasPageBeenScraped(query, RETAILERS.FLIPKART, page)) {
-        jobs.push(
-          this.scrapeQueue
-            .add(
-              'flipkart-search',
-              {
-                jobId: `flipkart-p${page}-${randomUUID()}`,
-                url: `https://www.flipkart.com/search?q=${encodeURIComponent(query)}&page=${page}`,
-                domain: 'flipkart.com',
-                options: { timeout: SEARCH_CONSTANTS.SCRAPE_TIMEOUT_MS },
-                createdAt: new Date(),
-              },
-              { priority: JOB_PRIORITIES.PREFETCH_PAGE },
-            )
-            .then(() => this.markPageAsScraped(query, RETAILERS.FLIPKART, page))
-            .catch((err) => {
-              this.logger.error(
-                `Failed to queue Flipkart page ${page} for query "${query}": ${err.message}`,
-              );
-            }),
-        );
-      }
+      for (
+        let page = Math.max(startPage, lastScrapedPage + 1);
+        page <= endPage;
+        page++
+      ) {
+        const options: Record<string, any> = {
+          timeout: SEARCH_CONSTANTS.SCRAPE_TIMEOUT_MS,
+        };
 
-      // Meesho (scroll-based, adjust iterations for deeper pages)
-      if (!this.hasPageBeenScraped(query, RETAILERS.MEESHO, page)) {
-        const scrollIterations =
-          page === 1
-            ? SEARCH_CONSTANTS.MEESHO_SCROLL_ITERATIONS_PAGE_1
-            : SEARCH_CONSTANTS.MEESHO_SCROLL_ITERATIONS_PAGE_2 * page;
+        // Meesho needs scroll iterations
+        if (retailer.name === RETAILERS.MEESHO) {
+          options.scrollIterations =
+            page === 1
+              ? SEARCH_CONSTANTS.MEESHO_SCROLL_ITERATIONS_PAGE_1
+              : SEARCH_CONSTANTS.MEESHO_SCROLL_ITERATIONS_PAGE_2 * page;
+        }
 
         jobs.push(
           this.scrapeQueue
             .add(
-              'meesho-search',
+              retailer.jobName,
               {
-                jobId: `meesho-p${page}-${randomUUID()}`,
-                url: `https://www.meesho.com/search?q=${encodeURIComponent(query)}`,
-                domain: 'meesho.com',
-                options: {
-                  timeout: SEARCH_CONSTANTS.SCRAPE_TIMEOUT_MS,
-                  scrollIterations,
-                },
+                jobId: `${retailer.name}-p${page}-${randomUUID()}`,
+                url: retailer.buildUrl(query, page),
+                domain: retailer.domain,
+                options,
                 createdAt: new Date(),
+                queryHash,
+                pageNumber: page,
               },
               { priority: JOB_PRIORITIES.PREFETCH_PAGE },
             )
-            .then(() => this.markPageAsScraped(query, RETAILERS.MEESHO, page))
             .catch((err) => {
               this.logger.error(
-                `Failed to queue Meesho page ${page} for query "${query}": ${err.message}`,
-              );
-            }),
-        );
-      }
-
-      // Amazon
-      if (!this.hasPageBeenScraped(query, RETAILERS.AMAZON, page)) {
-        jobs.push(
-          this.scrapeQueue
-            .add(
-              'amazon-search',
-              {
-                jobId: `amazon-p${page}-${randomUUID()}`,
-                url: `https://www.amazon.in/s?k=${encodeURIComponent(query)}&page=${page}`,
-                domain: 'amazon.in',
-                options: {
-                  timeout: SEARCH_CONSTANTS.SCRAPE_TIMEOUT_MS,
-                },
-                createdAt: new Date(),
-              },
-              { priority: JOB_PRIORITIES.PREFETCH_PAGE },
-            )
-            .then(() => this.markPageAsScraped(query, RETAILERS.AMAZON, page))
-            .catch((err) => {
-              this.logger.error(
-                `Failed to queue Amazon page ${page} for query "${query}": ${err.message}`,
+                `Failed to queue ${retailer.name} page ${page} for query "${query}": ${err.message}`,
               );
             }),
         );
@@ -769,26 +814,44 @@ export class SearchService implements OnModuleInit {
 
   /**
    * Scrape live from all retailers with resilient error handling.
-   * Uses lazy detail scraping: does NOT eagerly queue detail scraping for all products.
+   * Now uses CrawlProgress to avoid duplicate scrapes across users.
    */
   private async scrapeLiveAndPersist(query: string): Promise<any[]> {
+    const queryHash = this.computeQueryHash(query);
+    const normalizedQuery = this.normalizeQuery(query);
+
+    // Check which retailers need page 1 scraping
+    const myntraShouldScrape = await this.crawlProgressService.shouldScrape(
+      RETAILERS.MYNTRA,
+      queryHash,
+    );
+    const flipkartShouldScrape = await this.crawlProgressService.shouldScrape(
+      RETAILERS.FLIPKART,
+      queryHash,
+    );
+
     const results = await Promise.allSettled([
-      this.scrapeLiveMyntra(query),
-      this.scrapeLiveFlipkart(query),
+      myntraShouldScrape
+        ? this.scrapeLiveMyntra(query)
+        : Promise.resolve([] as ParsedProduct[]),
+      flipkartShouldScrape
+        ? this.scrapeLiveFlipkart(query)
+        : Promise.resolve([] as ParsedProduct[]),
     ]);
 
-    // Background jobs for Amazon and Meesho
-    this.scrapeLiveMeesho(query).catch((err) =>
+    // Background jobs for Amazon and Meesho (check CrawlProgress inside)
+    this.scrapeLiveMeeshoIfNeeded(query, queryHash).catch((err) =>
       this.logger.error(`Background Meesho search failed: ${err.message}`),
     );
-    this.queueLiveAmazon(query).catch((err) =>
+    this.queueLiveAmazonIfNeeded(query, queryHash).catch((err) =>
       this.logger.error(`Background Amazon search failed: ${err.message}`),
     );
 
     const allParsed: ParsedProduct[] = [];
+    const retailerNames = [RETAILERS.MYNTRA, RETAILERS.FLIPKART];
 
     results.forEach((result, index) => {
-      const retailer = [RETAILERS.MYNTRA, RETAILERS.FLIPKART][index];
+      const retailer = retailerNames[index];
       if (result.status === 'fulfilled') {
         allParsed.push(...result.value);
       } else {
@@ -808,8 +871,51 @@ export class SearchService implements OnModuleInit {
       try {
         persistedProducts = await this.productSaveService.upsertProducts(
           dedupedProducts,
-          ScrapStatus.BASIC,
+          getEnumKeyAsType(ScrapStatus, ScrapStatus.BASIC) as ScrapStatus,
         );
+
+        // Link products to query for cross-chat reuse
+        const productIds = persistedProducts.map((p) => p.id).filter(Boolean);
+
+        // Group by retailer and link
+        const byRetailer = new Map<string, string[]>();
+        for (const p of persistedProducts) {
+          const r = p.retailer || 'unknown';
+          if (!byRetailer.has(r)) byRetailer.set(r, []);
+          byRetailer.get(r)!.push(p.id);
+        }
+        for (const [retailer, ids] of byRetailer) {
+          this.productSaveService
+            .linkProductsToQuery(ids, queryHash, retailer, 1)
+            .catch((err) =>
+              this.logger.error(
+                `Failed to link products to query: ${err.message}`,
+              ),
+            );
+        }
+
+        // Update CrawlProgress for each retailer that was scraped
+        for (let i = 0; i < retailerNames.length; i++) {
+          const retailer = retailerNames[i];
+          const scraped = i === 0 ? myntraShouldScrape : flipkartShouldScrape;
+          if (scraped && results[i].status === 'fulfilled') {
+            const productsForRetailer = (
+              results[i] as PromiseFulfilledResult<ParsedProduct[]>
+            ).value.length;
+            const progress = await this.crawlProgressService.findOrCreate(
+              retailer,
+              queryHash,
+              normalizedQuery,
+            );
+            await this.crawlProgressService.markPageComplete(
+              progress.id,
+              productsForRetailer,
+            );
+            if (productsForRetailer === 0) {
+              await this.crawlProgressService.markExhausted(progress.id);
+            }
+          }
+        }
 
         // Generate embeddings asynchronously (fire-and-forget)
         this.generateEmbeddingsAsync(
@@ -841,8 +947,9 @@ export class SearchService implements OnModuleInit {
       productUrl: p.productUrl,
       brand: p.brand,
       retailer: p.retailer,
-      scrapStatus: 'BASIC',
+      scrapStatus: p.scrapStatus || 'BASIC',
       lastScraped: p.lastScraped,
+      score: 0.99,
     }));
   }
 
@@ -891,23 +998,6 @@ export class SearchService implements OnModuleInit {
     return [];
   }
 
-  private async queueLiveAmazon(query: string): Promise<void> {
-    const url = `https://www.amazon.in/s?k=${encodeURIComponent(query)}`;
-    await this.scrapeQueue.add(
-      'amazon-search',
-      {
-        jobId: `amazon-live-${randomUUID()}`,
-        url,
-        domain: 'amazon.in',
-        options: {
-          timeout: SEARCH_CONSTANTS.SCRAPE_TIMEOUT_MS,
-        },
-        createdAt: new Date(),
-      },
-      { priority: JOB_PRIORITIES.PREFETCH_PAGE },
-    );
-  }
-
   private async scrapeLiveFlipkart(query: string): Promise<ParsedProduct[]> {
     const url = `https://www.flipkart.com/search?q=${encodeURIComponent(query)}`;
     try {
@@ -945,5 +1035,89 @@ export class SearchService implements OnModuleInit {
       this.logger.error(`Meesho Live Scrape Failed: ${e.message}`, e.stack);
     }
     return [];
+  }
+
+  /**
+   * CrawlProgress-aware wrapper for Meesho background scraping.
+   */
+  private async scrapeLiveMeeshoIfNeeded(
+    query: string,
+    queryHash: string,
+  ): Promise<void> {
+    const shouldScrape = await this.crawlProgressService.shouldScrape(
+      RETAILERS.MEESHO,
+      queryHash,
+    );
+    if (!shouldScrape) {
+      this.logger.debug(
+        `Skipping Meesho live scrape for "${query}" — already scraped or in progress`,
+      );
+      return;
+    }
+    const products = await this.scrapeLiveMeesho(query);
+    if (products.length > 0) {
+      const persisted = await this.productSaveService.upsertProducts(
+        products,
+        getEnumKeyAsType(ScrapStatus, ScrapStatus.BASIC) as ScrapStatus,
+      );
+      const ids = persisted.map((p) => p.id).filter(Boolean);
+      await this.productSaveService.linkProductsToQuery(
+        ids,
+        queryHash,
+        RETAILERS.MEESHO,
+        1,
+      );
+      const progress = await this.crawlProgressService.findOrCreate(
+        RETAILERS.MEESHO,
+        queryHash,
+        this.normalizeQuery(query),
+      );
+      await this.crawlProgressService.markPageComplete(
+        progress.id,
+        products.length,
+      );
+    }
+  }
+
+  /**
+   * CrawlProgress-aware wrapper for Amazon background queuing.
+   */
+  private async queueLiveAmazonIfNeeded(
+    query: string,
+    queryHash: string,
+  ): Promise<void> {
+    const shouldScrape = await this.crawlProgressService.shouldScrape(
+      RETAILERS.AMAZON,
+      queryHash,
+    );
+    if (!shouldScrape) {
+      this.logger.debug(
+        `Skipping Amazon queue for "${query}" — already scraped or in progress`,
+      );
+      return;
+    }
+    await this.queueLiveAmazon(query, queryHash);
+  }
+
+  private async queueLiveAmazon(
+    query: string,
+    queryHash?: string,
+  ): Promise<void> {
+    const url = `https://www.amazon.in/s?k=${encodeURIComponent(query)}`;
+    await this.scrapeQueue.add(
+      'amazon-search',
+      {
+        jobId: `amazon-live-${randomUUID()}`,
+        url,
+        domain: 'amazon.in',
+        options: {
+          timeout: SEARCH_CONSTANTS.SCRAPE_TIMEOUT_MS,
+        },
+        createdAt: new Date(),
+        queryHash: queryHash || this.computeQueryHash(query),
+        pageNumber: 1,
+      },
+      { priority: JOB_PRIORITIES.PREFETCH_PAGE },
+    );
   }
 }
