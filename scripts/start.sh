@@ -155,7 +155,7 @@ case "$ACTION" in
         ;;
     logs)
         echo "📋 Showing logs..."
-        $COMPOSE_CMD logs -f $EXTRA_ARGS
+        $COMPOSE_CMD logs $EXTRA_ARGS
         ;;
     ps)
         echo "📊 Service status:"
