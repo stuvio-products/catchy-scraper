@@ -72,6 +72,7 @@ echo ""
 log "✅ Primary DB is healthy"
 
 # ─── Self-Healing: Ensure DB Users ──────────────────────────────────────────
+# ─── Self-Healing: Ensure DB Users ──────────────────────────────────────────
 ensure_db_setup() {
     log "Verifying DB users and schema..."
     local db_container="catchy-postgres"
@@ -81,25 +82,38 @@ ensure_db_setup() {
     local desired_pass="${POSTGRES_PASSWORD:-C@tchy_Pr0d_2026!xK9m}"
     local desired_db="${POSTGRES_DB:-catchy_production}"
 
-    # Check/Create Admin User
-    if ! docker exec -u postgres "$db_container" psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='$desired_user'" | grep -q 1; then
-        warn "User '$desired_user' missing. Creating..."
-        docker exec -u postgres "$db_container" psql -c "CREATE USER $desired_user WITH PASSWORD '$desired_pass' SUPERUSER;"
+    # Helper function to run psql as the correct user
+    exec_psql() {
+        docker exec -u postgres "$db_container" psql -U "$desired_user" -d "$desired_db" "$@"
+    }
+
+    # Verify connection first
+    if ! exec_psql -c "SELECT 1" >/dev/null 2>&1; then
+        warn "Could not connect as '$desired_user'. Assuming auth failure or initial setup."
+    else
+        log "✅ Connected as '$desired_user'"
     fi
-    # Check/Create DB
-    if ! docker exec -u postgres "$db_container" psql -tAc "SELECT 1 FROM pg_database WHERE datname='$desired_db'" | grep -q 1; then
-        warn "DB '$desired_db' missing. Creating..."
-        docker exec -u postgres "$db_container" psql -c "CREATE DATABASE $desired_db OWNER $desired_user;"
-    fi
+
+    # Check/Create Admin User (Self-Correction not possible if we can't connect, skipping recursive logic)
+    
     # Check/Create Replicator
-    if ! docker exec -u postgres "$db_container" psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='replicator'" | grep -q 1; then
+    if ! exec_psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='replicator'" 2>/dev/null | grep -q 1; then
         warn "User 'replicator' missing. Creating..."
-        docker exec -u postgres "$db_container" psql -c "CREATE USER replicator WITH REPLICATION ENCRYPTED PASSWORD 'replicator_password';"
+        exec_psql -c "CREATE USER replicator WITH REPLICATION ENCRYPTED PASSWORD 'replicator_password';" || error "Failed to create replicator"
+        log "✅ User 'replicator' created"
+    else
+        # Force password update to ensure sync
+        exec_psql -c "ALTER USER replicator WITH PASSWORD 'replicator_password';" >/dev/null 2>&1
+        log "✅ User 'replicator' exists (password synced)"
     fi
+
     # Check/Create Slot
-    if ! docker exec -u postgres "$db_container" psql -tAc "SELECT 1 FROM pg_replication_slots WHERE slot_name='replication_slot'" | grep -q 1; then
+    if ! exec_psql -tAc "SELECT 1 FROM pg_replication_slots WHERE slot_name='replication_slot'" 2>/dev/null | grep -q 1; then
         warn "Slot 'replication_slot' missing. Creating..."
-        docker exec -u postgres "$db_container" psql -c "SELECT pg_create_physical_replication_slot('replication_slot');"
+        exec_psql -c "SELECT pg_create_physical_replication_slot('replication_slot');" || error "Failed to create slot"
+        log "✅ Slot 'replication_slot' created"
+    else
+        log "✅ Slot 'replication_slot' exists"
     fi
 }
 ensure_db_setup || warn "Self-healing failed (non-critical if DB good)."

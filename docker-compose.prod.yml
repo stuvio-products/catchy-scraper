@@ -18,8 +18,7 @@ services:
       -c hot_standby_feedback=on
       -c hba_file=/etc/postgresql/pg_hba.conf
     healthcheck:
-      # Check if Postgres is accepting connections (uses default 'postgres' user via peer auth)
-      test: ["CMD-SHELL", "pg_isready"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-catchy_admin}"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -41,8 +40,7 @@ services:
         condition: service_healthy
     command: ["/bin/bash", "/init_replica.sh"]
     healthcheck:
-      # Check if Replica is ready (accepting connections)
-      test: ["CMD-SHELL", "pg_isready"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-catchy_admin}"]
       interval: 5s
       timeout: 5s
       retries: 10
