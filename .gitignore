@@ -42,3 +42,6 @@ redis_data/
 # Temp directories
 .temp
 .tmp
+
+# Backups
+backups/

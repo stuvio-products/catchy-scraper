@@ -34,7 +34,14 @@
     "test:e2e": "jest --config ./test/jest-e2e.json",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate deploy",
-    "prisma:push": "prisma db push"
+    "prisma:push": "prisma db push",
+    "db:sync": "bash scripts/sync-db.sh --sync",
+    "db:push": "bash scripts/sync-db.sh --push",
+    "db:pull": "bash scripts/sync-db.sh --pull",
+    "db:backup": "bash scripts/db-backup.sh backup",
+    "db:restore": "bash scripts/db-backup.sh restore",
+    "studio": "prisma studio",
+    "studio:prod": "export $(grep -v '^#' .env.prod | xargs) && prisma studio"
   },
   "dependencies": {
     "@fastify/cors": "^11.2.0",
