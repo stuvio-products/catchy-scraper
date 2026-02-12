@@ -69,6 +69,11 @@ jobs:
           DEPLOY_SHA="${{ github.sha }}"
           echo "📦 Deploying branch: $DEPLOY_BRANCH (commit: ${DEPLOY_SHA:0:7})"
           ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=60 -o ServerAliveCountMax=3 root@${{ secrets.VPS_IP }} "export DEPLOY_BRANCH='$DEPLOY_BRANCH' && export DEPLOY_SHA='$DEPLOY_SHA' && export GITHUB_TOKEN='$GITHUB_TOKEN' && bash -s" << 'ENDSSH'
+            # Load NVM
+            export NVM_DIR="$HOME/.nvm"
+            [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+            nvm use default || true
+
             set -e
             
             APP_DIR="/var/www/catchy-backend"
@@ -138,6 +143,11 @@ jobs:
 
           # Show final container status on VPS
           ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 root@${{ secrets.VPS_IP }} << 'ENDSSH'
+            # Load NVM
+            export NVM_DIR="$HOME/.nvm"
+            [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+            nvm use default || true
+
             APP_DIR="/var/www/catchy-backend"
             cd "$APP_DIR"
             npm run ps:prod || true

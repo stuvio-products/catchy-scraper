@@ -26,6 +26,34 @@ echo "🌿 Branch: $DEPLOY_BRANCH"
 echo "📝 Commit: ${DEPLOY_SHA:-unknown}"
 echo ""
 
+# ─── Load NVM (Node Version Manager) ─────────────────────────────────────────
+# This is required for non-interactive shells (like GitHub Actions SSH)
+export NVM_DIR="$HOME/.nvm"
+if [ -s "$NVM_DIR/nvm.sh" ]; then
+    echo "📦 Loading NVM..."
+    . "$NVM_DIR/nvm.sh"
+    # Use the default node version or the one specified in .nvmrc if it exists
+    if [ -f ".nvmrc" ]; then
+        nvm use || nvm install
+    else
+        nvm use default || echo "⚠️  No default node version set in nvm"
+    fi
+fi
+
+# ─── Ensure Node/NPM are available ─────────────────────────────────────────
+if ! command -v npm &> /dev/null; then
+    echo "❌ npm is not found in PATH"
+    echo "   PATH: $PATH"
+    # Try one more common location if nvm loading didn't work
+    if [ -f "/usr/local/bin/npm" ]; then
+        export PATH="/usr/local/bin:$PATH"
+    fi
+    if ! command -v npm &> /dev/null; then
+        exit 127
+    fi
+fi
+echo "✅ Node $(node -v) and NPM $(npm -v) are available."
+
 # ─── Ensure Docker is Available ─────────────────────────────────────────────
 if ! command -v docker &> /dev/null; then
     echo "❌ Docker is not installed. Please install Docker first."
