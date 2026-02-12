@@ -1,0 +1,174 @@
+# =============================================================================
+# docker-compose.yml — Base service definitions (shared between dev & prod)
+# =============================================================================
+# Usage:
+#   Dev:  docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+#   Prod: docker compose -f docker-compose.yml -f docker-compose.prod.yml up
+#
+# Or simply use: ./scripts/start.sh [--prod]
+
+services:
+  # ─── PostgreSQL Primary ────────────────────────────────────────────────────
+  db:
+    image: pgvector/pgvector:pg16
+    container_name: ${PROJECT_NAME}-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      REPLICATOR_USER: ${REPLICATOR_USER}
+      REPLICATOR_PASSWORD: ${REPLICATOR_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./postgres/primary/init.sh:/docker-entrypoint-initdb.d/init.sh
+    ports:
+      - "${DB_PORT}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - catchy-network
+
+  # ─── PostgreSQL Replica ────────────────────────────────────────────────────
+  db-replica:
+    image: pgvector/pgvector:pg16
+    container_name: ${PROJECT_NAME}-db-replica
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      REPLICATOR_USER: ${REPLICATOR_USER}
+      REPLICATOR_PASSWORD: ${REPLICATOR_PASSWORD}
+      PRIMARY_HOST: db
+    volumes:
+      - postgres_replica_data:/var/lib/postgresql/data
+      - ./postgres/replica/init.sh:/docker-entrypoint-initdb.d/init.sh
+    ports:
+      - "${DB_REPLICA_PORT}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - catchy-network
+
+  # ─── Redis ─────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: ${PROJECT_NAME}-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy noeviction
+    volumes:
+      - redis_data:/data
+    ports:
+      - "${REDIS_EXTERNAL_PORT}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - catchy-network
+
+  # ─── API Service (NestJS) ─────────────────────────────────────────────────
+  api:
+    container_name: ${PROJECT_NAME}-api
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      NODE_ENV: ${NODE_ENV}
+      DATABASE_URL: ${DATABASE_URL}
+      DATABASE_REPLICA_URL: ${DATABASE_REPLICA_URL}
+      REDIS_HOST: ${REDIS_HOST}
+      REDIS_PORT: ${REDIS_PORT}
+      API_PORT: ${API_PORT}
+      API_KEY: ${API_KEY}
+      JWT_SECRET: ${JWT_SECRET}
+      SECRET_SALT: ${SECRET_SALT}
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      EMAIL_HOST: ${EMAIL_HOST}
+      EMAIL_PORT: ${EMAIL_PORT}
+      EMAIL_USER: ${EMAIL_USER}
+      EMAIL_PASS: ${EMAIL_PASS}
+      BROWSER_SERVICE_HOST: ${BROWSER_SERVICE_HOST}
+      BROWSER_SERVICE_PORT: ${BROWSER_SERVICE_PORT}
+      BROWSER_SERVICE_API_KEY: ${BROWSER_SERVICE_API_KEY}
+    ports:
+      - "${API_EXTERNAL_PORT}:${API_PORT}"
+    networks:
+      - catchy-network
+
+  # ─── Worker Service (NestJS) ───────────────────────────────────────────────
+  worker:
+    container_name: ${PROJECT_NAME}-worker
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      NODE_ENV: ${NODE_ENV}
+      DATABASE_URL: ${DATABASE_URL}
+      DATABASE_REPLICA_URL: ${DATABASE_REPLICA_URL}
+      REDIS_HOST: ${REDIS_HOST}
+      REDIS_PORT: ${REDIS_PORT}
+      WORKER_CONCURRENCY: ${WORKER_CONCURRENCY}
+      API_KEY: ${API_KEY}
+      JWT_SECRET: ${JWT_SECRET}
+      SECRET_SALT: ${SECRET_SALT}
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      BROWSER_SERVICE_HOST: ${BROWSER_SERVICE_HOST}
+      BROWSER_SERVICE_PORT: ${BROWSER_SERVICE_PORT}
+      BROWSER_SERVICE_API_KEY: ${BROWSER_SERVICE_API_KEY}
+      PROXY_PROVIDER: ${PROXY_PROVIDER}
+      FAKE_PROXY_COST_PER_MB: ${FAKE_PROXY_COST_PER_MB}
+      FAKE_PROXY_FAILURE_RATE: ${FAKE_PROXY_FAILURE_RATE}
+    networks:
+      - catchy-network
+
+  # ─── Browser Service (NestJS + Playwright) ─────────────────────────────────
+  browser-service:
+    container_name: ${PROJECT_NAME}-browser-service
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      NODE_ENV: ${NODE_ENV}
+      API_KEY: ${API_KEY}
+      BROWSER_SERVICE_PORT: ${BROWSER_SERVICE_PORT}
+      BROWSER_SERVICE_API_KEY: ${BROWSER_SERVICE_API_KEY}
+      BROWSER_COUNT: ${BROWSER_COUNT}
+      BROWSER_HEADLESS: ${BROWSER_HEADLESS}
+      BROWSER_TIMEOUT_MS: ${BROWSER_TIMEOUT_MS}
+      REDIS_HOST: ${REDIS_HOST}
+      REDIS_PORT: ${REDIS_PORT}
+    ports:
+      - "${BROWSER_SERVICE_EXTERNAL_PORT}:${BROWSER_SERVICE_PORT}"
+    networks:
+      - catchy-network
+
+volumes:
+  postgres_data:
+    driver: local
+  postgres_replica_data:
+    driver: local
+  redis_data:
+    driver: local
+
+networks:
+  catchy-network:
+    driver: bridge

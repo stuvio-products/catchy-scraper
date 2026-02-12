@@ -34,10 +34,10 @@ lerna-debug.log*
 !.vscode/launch.json
 !.vscode/extensions.json
 
-# Environment variables
-.env
-.env.local
-.env.*.local
+# Docker volumes
+postgres_data/
+postgres_replica_data/
+redis_data/
 
 # Temp directories
 .temp

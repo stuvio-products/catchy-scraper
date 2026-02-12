@@ -55,7 +55,7 @@ jobs:
 
       - name: Transfer deployment scripts
         run: |
-          echo "📦 Transferring deployment scripts..."
+          echo "📦 Transferring deployment files..."
           scp -o StrictHostKeyChecking=no scripts/deploy.sh root@${{ secrets.VPS_IP }}:/tmp/deploy.sh
           scp -o StrictHostKeyChecking=no scripts/setup-nginx.sh root@${{ secrets.VPS_IP }}:/tmp/setup-nginx.sh
           ssh -o StrictHostKeyChecking=no root@${{ secrets.VPS_IP }} "chmod +x /tmp/deploy.sh /tmp/setup-nginx.sh"
@@ -75,11 +75,6 @@ jobs:
             
             # Ensure app directory exists
             echo "📁 Ensuring app directory exists..."
-            mkdir -p "$APP_DIR/scripts" || {
-              echo "❌ Failed to create app directory"
-              exit 1
-            }
-            
             # Copy scripts to app directory
             echo "📦 Copying deployment scripts..."
             cp /tmp/deploy.sh "$APP_DIR/scripts/deploy.sh"
@@ -115,18 +110,12 @@ jobs:
             # Show container status
             echo ""
             echo "Container Status:"
-            if [ -f "$APP_DIR/docker-compose.prod.yml" ]; then
-              cd "$APP_DIR"
-              docker compose -f docker-compose.prod.yml ps || true
-              
-              echo ""
-              echo "Recent Application Logs:"
-              docker compose -f docker-compose.prod.yml logs --tail=30 api || true
-            else
-              echo "⚠️  docker-compose.prod.yml not found"
-              echo "Directory contents:"
-              ls -la "$APP_DIR/" || true
-            fi
+            cd "$APP_DIR"
+            npm run ps:prod || true
+            
+            echo ""
+            echo "Recent Application Logs:"
+            npm run logs:prod -- --tail=30 || true
             
             exit $DEPLOY_EXIT_CODE
           ENDSSH
@@ -149,23 +138,11 @@ jobs:
 
           # Show final container status on VPS
           ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 root@${{ secrets.VPS_IP }} << 'ENDSSH'
-            echo ""
-            echo "=========================================="
-            echo "Final Container Status"
-            echo "=========================================="
             APP_DIR="/var/www/catchy-backend"
-            if [ -f "$APP_DIR/docker-compose.prod.yml" ]; then
-              cd "$APP_DIR"
-              docker compose -f docker-compose.prod.yml ps || true
-              echo ""
-              echo "=========================================="
-              echo "Recent Logs (last 20 lines)"
-              echo "=========================================="
-              docker compose -f docker-compose.prod.yml logs --tail=20 api || true
-            else
-              echo "⚠️  docker-compose.prod.yml not found"
-              ls -la "$APP_DIR/" || true
-            fi
+            cd "$APP_DIR"
+            npm run ps:prod || true
+            echo ""
+            npm run logs:prod -- --tail=20 || true
           ENDSSH
 
       - name: Deployment status

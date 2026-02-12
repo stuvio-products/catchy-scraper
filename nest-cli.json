@@ -3,7 +3,7 @@
   "collection": "@nestjs/schematics",
   "sourceRoot": "src",
   "compilerOptions": {
-    "deleteOutDir": true,
+    "deleteOutDir": false,
     "webpack": false
   },
   "projects": {
@@ -27,9 +27,9 @@
     },
     "browser-service": {
       "type": "application",
-      "root": "src/apps/browser-service",
-      "entryFile": "main",
-      "sourceRoot": "src/apps/browser-service",
+      "root": ".",
+      "entryFile": "apps/browser-service/main",
+      "sourceRoot": ".",
       "compilerOptions": {
         "tsConfigPath": "src/apps/browser-service/tsconfig.app.json"
       }

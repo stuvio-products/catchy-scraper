@@ -1,0 +1,36 @@
+# =============================================================================
+# docker-compose.dev.yml — Development overrides
+# =============================================================================
+# Adds hot-reload via volume mounts. No production build needed.
+# Usage: docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: development
+    volumes:
+      - .:/app
+      - /app/node_modules
+    command: npm run dev:api
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: development
+    volumes:
+      - .:/app
+      - /app/node_modules
+    command: npm run dev:worker
+
+  browser-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: development
+    volumes:
+      - .:/app
+      - /app/node_modules
+    command: npm run dev:browser

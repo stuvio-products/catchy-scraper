@@ -4,22 +4,41 @@ This guide provides step-by-step instructions to get the combined Scraper and Ba
 
 ## 📋 Prerequisites
 
-- **Docker & Docker Compose**
+- **Docker & Docker Compose** (v2+)
 - **Node.js 20+**
 - **npm** (comes with Node.js)
 
 ---
 
-## 🚀 Step 1: Initialize Environment
-
-First, navigate to the service directory and set up your environment variables:
+## 🚀 Quick Start
 
 ```bash
-cd scraper-service
-cp .env.example .env
+# 1. Clone the repo
+git clone https://github.com/stuvio-products/catchy-scraper.git
+cd catchy-scraper
+
+# 2. Set up environment
+cp .env.example .env.local
+
+# 3. Start all services (dev mode)
+./scripts/start.sh
 ```
 
-Edit the `.env` file and provide values for:
+That's it! All services (DB, Redis, API, Worker, Browser Service) will start automatically.
+
+---
+
+## 📁 Environment Files
+
+| File           | Purpose                                               |
+| -------------- | ----------------------------------------------------- |
+| `.env.example` | Template — copy to create `.env.local` or `.env.prod` |
+| `.env.local`   | **Development** — used by `./scripts/start.sh`        |
+| `.env.prod`    | **Production** — used by `./scripts/start.sh --prod`  |
+
+### Key Configuration
+
+Edit `.env.local` and provide values for:
 
 - `GEMINI_API_KEY`: Required for Chat features and embeddings.
 - `JWT_SECRET`: Any secure string for token signing.
@@ -27,9 +46,56 @@ Edit the `.env` file and provide values for:
 
 ---
 
-## 📦 Step 2: Install & Prepare Database
+## 🐳 Docker Services
 
-Install the unified dependencies and generate the Prisma client for the combined schema:
+| Service                  | Container                | Internal Port | Dev Host Port | Prod Host Port |
+| ------------------------ | ------------------------ | ------------- | ------------- | -------------- |
+| PostgreSQL (Primary)     | `catchy-db`              | 5432          | 5432          | 5440           |
+| PostgreSQL (Replica)     | `catchy-db-replica`      | 5432          | 5433          | 5441           |
+| Redis                    | `catchy-redis`           | 6379          | 6379          | 6380           |
+| API (NestJS)             | `catchy-api`             | 3000          | 3000          | 4000           |
+| Worker (NestJS)          | `catchy-worker`          | —             | —             | —              |
+| Browser Service (NestJS) | `catchy-browser-service` | 3001          | 3001          | 4001           |
+
+> All ports are configurable via the `.env.local` / `.env.prod` files.
+
+---
+
+## 🛠️ Scripts Reference
+
+### Start Services
+
+```bash
+# Development (default)
+./scripts/start.sh
+
+# Development (explicit)
+./scripts/start.sh --dev
+
+# Production
+./scripts/start.sh --prod
+
+# Production (detached)
+./scripts/start.sh --prod -d
+```
+
+### Manage Services
+
+```bash
+# Stop services
+./scripts/start.sh --down
+./scripts/start.sh --prod --down
+
+# View logs
+./scripts/start.sh --logs
+./scripts/start.sh --prod --logs
+
+# View status
+./scripts/start.sh --ps
+./scripts/start.sh --prod --ps
+```
+
+### Direct npm Scripts
 
 ```bash
 # Install dependencies
@@ -37,53 +103,45 @@ npm install
 
 # Generate Prisma Client
 npm run prisma:generate
+
+# Run migrations
+npm run prisma:migrate
+
+# Dev (without Docker — requires local DB & Redis)
+npm run start:dev:api
+npm run start:dev:worker
+npm run start:dev:browser
 ```
 
 ---
 
-## 🐳 Step 3: Launch Services
+## 🛠️ Database Setup (First Time Only)
 
-Start the entire infrastructure (DB, Redis, API, Worker, Browser Service) using Docker Compose:
+On first launch, Docker automatically:
+
+1. Creates the PostgreSQL database with extensions:
+   - **pgvector** — Vector similarity search
+   - **pg_trgm** — Trigram text search
+   - **uuid-ossp** — UUID generation
+2. Creates the replication user
+3. Configures streaming replication to the replica
+4. Runs Prisma migrations (prod mode)
+
+To apply custom indexes manually:
 
 ```bash
-# Build and start all containers
-docker-compose up --build
-```
-
-**Wait for all services to become healthy.** You should see:
-
-- `scraper-db` ready to accept connections.
-- `scraper-redis` healthy.
-- `scraper-api` running on port 3000.
-- `scraper-browser-service` ready.
-
----
-
-## 🛠️ Step 4: Database Setup (First Time Only)
-
-Once the database container is up, run the migrations and create the necessary vector indexes:
-
-```bash
-# In a new terminal:
-cd scraper-service
-
-# Push the schema to the database
-npx prisma db push
-
-# Create optimized product and vector indexes
-# Note: Ensure you have pgvector extension if using real production DB
-# In docker-compose, postgres:15-alpine is used.
-# For vector support, you might need a specialized image or manual extension enabling.
+# Connect to the running DB container
+docker exec -i catchy-db psql -U catchy_dev -d catchy_development < scripts/create-product-indexes.sql
 ```
 
 ---
 
-## ✅ Step 5: Verification
+## ✅ Verification
 
 ### 1. Health Check
 
 ```bash
-curl http://localhost:3000/api/health \
+curl http://localhost:3000/health \
   -H "X-API-Key: dev-api-key-change-in-production"
 ```
 
@@ -112,8 +170,31 @@ curl -X POST http://localhost:3000/auth/login \
 
 ---
 
+## 🏗️ Architecture
+
+```
+┌──────────────────────────────────────────────────┐
+│                  Docker Network                   │
+│                                                    │
+│  ┌─────────┐  ┌──────────────┐  ┌──────────┐    │
+│  │   db    │──│  db-replica   │  │  redis   │    │
+│  │ (PG 16) │  │  (PG 16)     │  │ (7-alp)  │    │
+│  └────┬────┘  └──────────────┘  └────┬─────┘    │
+│       │                               │           │
+│  ┌────┴────────────────────────┬─────┘           │
+│  │                              │                 │
+│  ▼                              ▼                 │
+│  ┌──────────┐  ┌──────────┐  ┌───────────────┐  │
+│  │   api    │  │  worker   │  │browser-service│  │
+│  │ (NestJS) │  │ (NestJS)  │  │  (NestJS +    │  │
+│  │ :3000    │  │           │  │  Playwright)  │  │
+│  └──────────┘  └──────────┘  └───────────────┘  │
+└──────────────────────────────────────────────────┘
+```
+
+---
+
 ## 📖 Key Documentation
 
 - **API Reference**: [README.md](./README.md)
-- **Architecture**: [walkthrough.md](../.gemini/antigravity/brain/44b687e3-cb67-48b2-8c7b-dd497fa1e08f/walkthrough.md)
 - **Strategies**: `src/shared/domain/config/domain-strategies.json`

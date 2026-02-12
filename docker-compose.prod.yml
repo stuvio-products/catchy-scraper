@@ -1,0 +1,58 @@
+# =============================================================================
+# docker-compose.prod.yml — Production overrides
+# =============================================================================
+# Uses compiled production build. No source mounting.
+# Usage: docker compose -f docker-compose.yml -f docker-compose.prod.yml up --build -d
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+    command: >
+      sh -c "npx prisma migrate deploy && node dist/src/apps/api/main"
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+    command: node dist/src/apps/worker/main
+
+  browser-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+    command: node dist/src/apps/browser-service/main
+
+  # Production DB tuning
+  db:
+    command: >
+      postgres
+        -c max_connections=200
+        -c shared_buffers=256MB
+        -c effective_cache_size=768MB
+        -c work_mem=4MB
+        -c maintenance_work_mem=64MB
+        -c wal_level=replica
+        -c max_wal_senders=5
+        -c hot_standby=on
+
+  db-replica:
+    command: >
+      postgres
+        -c max_connections=200
+        -c shared_buffers=128MB
+        -c effective_cache_size=384MB
+        -c work_mem=4MB
+        -c hot_standby=on
+
+  redis:
+    command: >
+      redis-server
+        --appendonly yes
+        --maxmemory 512mb
+        --maxmemory-policy noeviction
+        --save 60 1000

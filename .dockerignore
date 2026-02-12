@@ -1,0 +1,36 @@
+# =============================================================================
+# .dockerignore — Files excluded from Docker build context
+# =============================================================================
+node_modules
+dist
+.git
+.github
+.vscode
+.idea
+.DS_Store
+*.log
+
+# Env files (injected via compose, not baked into image)
+.env
+.env.local
+.env.prod
+.env.*.local
+
+# Documentation
+docs
+README.md
+GETTING_STARTED.md
+
+# Coverage and tests
+coverage
+.nyc_output
+test
+
+# Docker volumes
+postgres_data
+postgres_replica_data
+redis_data
+
+# Gemini / Agent dirs
+.gemini
+.agent
