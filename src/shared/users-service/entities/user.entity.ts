@@ -1,4 +1,4 @@
-import { User, UserStyleProfile } from '@/prisma/client';
+import { User, UserStyleProfile } from '@/generated/prisma/client';
 
 export type UserEntity = User;
 

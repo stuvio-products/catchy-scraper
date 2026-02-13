@@ -1,21 +1,21 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '@/shared/prisma/prisma.service';
-import { Chat, Message, MessageRole, ChatState } from '@/prisma/client';
-import { getEnumKeyAsType } from '@/shared/lib/util';
-
-export interface UpdateStateData {
-  currentQuery: string;
-  filters: any;
-  intentConfidence?: any;
-  mode?: string;
-}
+import {
+  Chat,
+  Message,
+  MessageRole,
+  ChatState,
+} from '@/generated/prisma/client';
 
 export interface CreateChatData {
   userId: string;
   initialQuery: string;
   initialFilters?: any;
-  intentConfidence?: any;
-  mode?: string;
+}
+
+export interface UpdateStateData {
+  currentQuery: string;
+  filters: any;
 }
 
 @Injectable()
@@ -31,10 +31,7 @@ export class ChatRepository {
         userId: data.userId,
         messages: {
           create: {
-            role: getEnumKeyAsType(
-              MessageRole,
-              MessageRole.USER,
-            ) as MessageRole,
+            role: MessageRole.USER,
             content: data.initialQuery,
           },
         },
@@ -42,8 +39,6 @@ export class ChatRepository {
           create: {
             currentQuery: data.initialQuery,
             filters: data.initialFilters ?? {},
-            intentConfidence: data.intentConfidence,
-            mode: data.mode ?? 'SEARCH',
           },
         },
       },
@@ -91,7 +86,7 @@ export class ChatRepository {
     return this.prisma.client.message.create({
       data: {
         chatId,
-        role: getEnumKeyAsType(MessageRole, role) as MessageRole,
+        role,
         content,
       },
     });
@@ -106,8 +101,6 @@ export class ChatRepository {
       data: {
         currentQuery: data.currentQuery,
         filters: data.filters,
-        intentConfidence: data.intentConfidence,
-        mode: data.mode,
       },
     });
   }

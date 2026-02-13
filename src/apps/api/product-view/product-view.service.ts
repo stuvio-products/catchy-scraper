@@ -8,7 +8,7 @@ import { ProductSaveService } from '@/shared/scraping/services/product-save.serv
 import { ScrapeLockService } from '@/shared/scraping/services/scrape-lock.service';
 import { QUEUE_NAMES } from '@/shared/queue/queue.constants';
 import { ProductDetailJob } from '@/shared/queue/interfaces/product-detail-job.interface';
-import { ScrapStatus, ScrapeState } from '@/prisma/client';
+import { ScrapStatus, ScrapeState } from '@/generated/prisma/client';
 import { getEnumKeyAsType } from '@/shared/lib/util';
 
 /** 24 hours in milliseconds */

@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '@/shared/prisma/prisma.service';
-import { CrawlStatus } from '@/prisma/client';
+import { CrawlStatus } from '@/generated/prisma/client';
 import { getEnumKeyAsType } from '@/shared/lib/util';
 
 @Injectable()

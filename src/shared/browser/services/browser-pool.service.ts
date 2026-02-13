@@ -11,7 +11,7 @@ import { Proxy } from '@/shared/proxy/interfaces/proxy.interface';
 import {
   BrowserInstance,
   BrowserPoolStats,
-} from '@/shared/browser/interfaces/browser-instance.interface';
+} from '../interfaces/browser-instance.interface';
 import { v4 as uuidv4 } from 'uuid';
 
 @Injectable()
@@ -30,60 +30,31 @@ export class BrowserPoolService implements OnModuleInit, OnModuleDestroy {
       this.configService.get<boolean>('BROWSER_HEADLESS') !== false;
   }
 
-  /**
-   * Check if domain should launch browser in visible mode for debugging
-   */
-  private isDebugDomain(domain?: string): boolean {
-    if (!domain) return false;
-
-    const debugDomains =
-      this.configService.get<string>('DEBUG_BROWSER_DOMAINS') || '';
-
-    if (!debugDomains) return false;
-
-    const domains = debugDomains.split(',').map((d) => d.trim().toLowerCase());
-    const normalizedDomain = domain.toLowerCase();
-
-    return domains.some((d) => normalizedDomain.includes(d));
-  }
-
   async onModuleInit() {
     this.logger.log(
       `Initializing browser pool with ${this.browserCount} browsers (headless: ${this.headless})`,
     );
 
-    try {
-      const launchPromises = Array.from({ length: this.browserCount }).map(() =>
-        this.launchBrowser(),
-      );
-      await Promise.all(launchPromises);
-
-      this.logger.log(
-        `Browser pool initialized with ${this.browsers.size} browsers`,
-      );
-    } catch (error) {
-      this.logger.warn(
-        `Browser pool initialization failed: ${error.message}. ` +
-          `The API will run without local browsers — use browser-service instead.`,
-      );
+    for (let i = 0; i < this.browserCount; i++) {
+      await this.launchBrowser();
     }
+
+    this.logger.log(
+      `Browser pool initialized with ${this.browsers.size} browsers`,
+    );
   }
 
   async onModuleDestroy() {
     this.logger.log('Shutting down browser pool...');
 
-    const closePromises = Array.from(this.browsers.entries()).map(
-      async ([id, instance]) => {
-        try {
-          await instance.browser.close();
-          this.logger.debug(`Closed browser ${id}`);
-        } catch (error) {
-          this.logger.error(`Failed to close browser ${id}: ${error.message}`);
-        }
-      },
-    );
-
-    await Promise.all(closePromises);
+    for (const [id, instance] of this.browsers.entries()) {
+      try {
+        await instance.browser.close();
+        this.logger.debug(`Closed browser ${id}`);
+      } catch (error) {
+        this.logger.error(`Failed to close browser ${id}: ${error.message}`);
+      }
+    }
 
     this.browsers.clear();
     this.logger.log('Browser pool shutdown complete');
@@ -98,36 +69,14 @@ export class BrowserPoolService implements OnModuleInit, OnModuleDestroy {
 
       this.logger.log(`Launching browser ${browserId} with proxy ${proxy.id}`);
 
-      // Enable visible browser for debug domains
-      const headlessMode = this.isDebugDomain(domain) ? false : this.headless;
-
-      if (!headlessMode && domain) {
-        this.logger.log(
-          `Launching browser ${browserId} in VISIBLE mode for debugging domain: ${domain}`,
-        );
-      }
-
-      const isFakeProxy = proxy.host.includes('fake.com');
-
       const browser = await chromium.launch({
-        headless: headlessMode,
-        // proxy: isFakeProxy
-        //   ? undefined
-        //   : {
-        //       server: `http://${proxy.host}:${proxy.port}`,
-        //       username: proxy.username,
-        //       password: proxy.password,
-        //     },
-        args: [
-          '--no-sandbox',
-          '--disable-setuid-sandbox',
-          '--disable-blink-features=AutomationControlled',
-          '--disable-infobars',
-          '--window-position=0,0',
-          '--ignore-certificate-errors',
-          '--ignore-certificate-errors-spki-list',
-          '--disable-dev-shm-usage',
-        ],
+        headless: this.headless,
+        proxy: {
+          server: `http://${proxy.host}:${proxy.port}`,
+          username: proxy.username,
+          password: proxy.password,
+        },
+        args: ['--no-sandbox', '--disable-setuid-sandbox'],
       });
 
       const instance: BrowserInstance = {

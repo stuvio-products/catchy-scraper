@@ -10,11 +10,9 @@ import {
   Query,
 } from '@nestjs/common';
 import { ChatService } from './chat.service';
-import { SearchService } from '@/apps/api/search/search.service';
-import { ChatCursorService } from '@/shared/scraping/services/chat-cursor.service';
-import { getEnumKeyAsType } from '@/shared/lib/util';
+// import { SearchService } from '@/apps/api/search/search.service';
 import { SendMessageDto } from './dto/chat.dto';
-import { MessageRole } from '@/prisma/client';
+import { MessageRole } from '@/generated/prisma/client';
 import { UseGuards, UnauthorizedException } from '@nestjs/common';
 import { JwtAuthGuard } from '@/apps/api/auth/guards/jwt-auth.guard';
 import { CurrentUser } from '@/apps/api/auth/decorators/current-user.decorator';
@@ -25,9 +23,8 @@ import type { RequestUser } from '@/apps/api/auth/entities/auth.entities';
 export class ChatController {
   constructor(
     private readonly chatService: ChatService,
-    @Inject(forwardRef(() => SearchService))
-    private readonly searchService: SearchService,
-    private readonly chatCursorService: ChatCursorService,
+    // @Inject(forwardRef(() => SearchService))
+    // private readonly searchService: SearchService,
   ) {}
 
   @Get()
@@ -46,100 +43,19 @@ export class ChatController {
     if (chat.userId !== user.id)
       throw new UnauthorizedException('Access denied');
 
-    const limitNum = limit ? parseInt(limit, 10) : 20;
+    // const limitNum = limit ? parseInt(limit, 10) : 10;
+    // const cursorNum = cursor ? parseFloat(cursor) : undefined;
 
-    // If client sent a cursor (page 2+), use existing embedding search
-    if (cursor) {
-      const searchResult = await this.searchService.searchWithState(
-        chat.state!,
-        limitNum,
-        cursor,
-      );
-
-      // Low-water-mark: if embedding search returned fewer than requested,
-      // trigger background scraping for more retailer pages
-      if (chat.state?.currentQuery && searchResult.products.length < limitNum) {
-        this.searchService
-          .backgroundScrapeNextPages(chat.state.currentQuery, 1, 5)
-          .catch((err) =>
-            console.error(
-              `Background pagination trigger failed: ${err.message}`,
-            ),
-          );
-      }
-
-      return { chatId, ...searchResult };
-    }
-
-    // First page: try ChatCursor (deterministic, ProductQuery-based)
-    if (chat.state?.currentQuery) {
-      const queryHash = this.searchService.computeQueryHash(
-        chat.state.currentQuery,
-      );
-      const retailers = ['myntra', 'flipkart', 'meesho', 'amazon'];
-
-      const { products, totalAvailable } =
-        await this.chatCursorService.getUnseenProducts(
-          chatId,
-          queryHash,
-          retailers,
-          limitNum,
-        );
-
-      if (products.length > 0) {
-        // Advance cursors for the products we're serving
-        await this.chatCursorService.advanceCursorsForProducts(
-          chatId,
-          queryHash,
-          products,
-        );
-
-        // Low-water-mark: if we returned fewer products than requested,
-        // the DB is running out — proactively scrape more pages in the background.
-        // backgroundScrapeNextPages checks CrawlProgress per-retailer internally,
-        // so it will only scrape pages that haven't been scraped yet.
-        if (products.length < limitNum) {
-          this.searchService
-            .backgroundScrapeNextPages(chat.state.currentQuery, 1, 5)
-            .catch((err) =>
-              console.error(
-                `Background pagination trigger failed: ${err.message}`,
-              ),
-            );
-        }
-
-        // Build cursor for client to request page 2 via embedding search
-        // Only set nextCursor if more unseen products exist beyond what we just served
-        const lastProduct = products[products.length - 1];
-        const hasMore = totalAvailable > products.length;
-        const nextCursor =
-          hasMore && lastProduct ? `0.99:${lastProduct.id}` : null;
-
-        return {
-          chatId,
-          products: products.map((p) => ({
-            ...p,
-            similarity: 0.99, // synthetic score for ProductQuery results
-          })),
-          nextCursor,
-          totalAvailable,
-          hasMore,
-          source: 'product_query',
-        };
-      }
-    }
-
-    // Fallback: embedding-based search (for old chats or empty ProductQuery)
-    const searchResult = await this.searchService.searchWithState(
-      chat.state!,
-      limitNum,
-      undefined,
-    );
+    // const searchResult = await this.searchService.searchWithState(
+    //   chat.state!,
+    //   limitNum,
+    //   cursorNum,
+    // );
 
     return {
       chatId,
-      ...searchResult,
-      source: 'embedding',
+      // ...searchResult,
+      message: 'Search results unavailable (SearchModule not yet migrated)',
     };
   }
 
@@ -154,11 +70,7 @@ export class ChatController {
       throw new UnauthorizedException('Access denied');
 
     // 1. Add User Message
-    await this.chatService.addMessage(
-      chatId,
-      getEnumKeyAsType(MessageRole, MessageRole.USER) as MessageRole,
-      body.text,
-    );
+    await this.chatService.addMessage(chatId, MessageRole.USER, body.text);
 
     // 2. Update State (LLM Intent Extraction)
     const updatedState = await this.chatService.updateStateWithIntent(
@@ -167,15 +79,11 @@ export class ChatController {
     );
 
     // 3. Run Search with new State
-    // Fetch first page of results for the new intent
-    const searchResult = await this.searchService.searchWithState(
-      updatedState,
-      10, // Default limit
-      undefined, // No cursor for first page
-    );
+    // const searchResult = await this.searchService.searchWithState(updatedState);
 
     // 4. Add Assistant Message
     // Summarize the action or just say "Here are the results"
+    // Ideally, we could generate a response text using LLM too, but for now simple response.
     const assistantContent =
       `Here are some ${updatedState.currentQuery} options.` +
       (updatedState.filters
@@ -184,14 +92,14 @@ export class ChatController {
 
     await this.chatService.addMessage(
       chatId,
-      getEnumKeyAsType(MessageRole, MessageRole.ASSISTANT) as MessageRole,
+      MessageRole.ASSISTANT,
       assistantContent,
     );
 
     return {
       chatId,
+      // ...searchResult,
       message: assistantContent,
-      ...searchResult, // Include products in response
     };
   }
 

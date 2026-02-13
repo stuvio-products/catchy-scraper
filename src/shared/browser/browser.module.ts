@@ -6,7 +6,7 @@ import { BrowserPoolService } from './services/browser-pool.service';
 import { BrowserHealthService } from './services/browser-health.service';
 
 @Module({
-  imports: [ConfigModule, ScheduleModule, ProxyModule],
+  imports: [ConfigModule, ScheduleModule.forRoot(), ProxyModule],
   providers: [BrowserPoolService, BrowserHealthService],
   exports: [BrowserPoolService],
 })

@@ -2,7 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '@/shared/prisma/prisma.service';
 import { GeminiService } from '@/shared/gemini/gemini.service';
 import { ParsedProduct } from '@/shared/scraping/interfaces/parsed-product.interface';
-import { ScrapStatus } from '@/prisma/client';
+import { ScrapStatus } from '@/generated/prisma/client';
 import { getEnumKeyAsType } from '@/shared/lib/util';
 
 @Injectable()

@@ -14,7 +14,7 @@ import { ResetPasswordDto } from './dto/reset-password.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetForgottenPasswordDto } from './dto/reset-forgotten-password.dto';
 import { OtpService } from './otp/otp.service';
-import { OtpType } from '@/prisma/client';
+import { OtpType } from '@/generated/prisma/client';
 import { MailService } from '@/shared/mail/mail.service';
 import { UserLogsRepository } from '@/shared/user-logs/user-logs.repository';
 

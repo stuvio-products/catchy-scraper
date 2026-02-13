@@ -1,15 +1,19 @@
 {
-  "extends": "../../../tsconfig.json",
-  "compilerOptions": {
-    "declaration": false,
-    "outDir": "../../../dist",
-    "rootDir": "../../",
-    "baseUrl": "../../../"
-  },
-  "include": [
-    "**/*",
-    "../../../src/shared/**/*",
-    "../../../src/generated/**/*"
-  ],
-  "exclude": ["node_modules", "dist", "test", "**/*spec.ts"]
+    "extends": "../../../tsconfig.json",
+    "compilerOptions": {
+        "declaration": false,
+        "outDir": "../../../dist",
+        "rootDir": "../../",
+        "baseUrl": "../../../"
+    },
+    "include": [
+        "**/*",
+        "../../../src/shared/**/*"
+    ],
+    "exclude": [
+        "node_modules",
+        "dist",
+        "test",
+        "**/*spec.ts"
+    ]
 }

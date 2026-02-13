@@ -1,5 +1,10 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { Chat, Message, MessageRole, ChatState } from '@/prisma/client';
+import {
+  Chat,
+  Message,
+  MessageRole,
+  ChatState,
+} from '@/generated/prisma/client';
 import { GeminiService } from '@/shared/gemini/gemini.service';
 import { ChatRepository } from './chat.repository';
 
@@ -16,8 +21,6 @@ export class ChatService {
     userId: string,
     initialQuery: string,
     initialFilters: any = {},
-    intentConfidence?: any,
-    mode: string = 'SEARCH',
   ): Promise<Chat> {
     // Generate initial embedding for the state
     const embedding = await this.geminiService.generateEmbedding(initialQuery);
@@ -26,8 +29,6 @@ export class ChatService {
       userId,
       initialQuery,
       initialFilters,
-      intentConfidence,
-      mode,
     });
 
     await this.chatRepository.updateChatStateEmbedding(chat.id, embedding);

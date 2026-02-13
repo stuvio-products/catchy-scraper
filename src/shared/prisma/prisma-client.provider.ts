@@ -1,26 +1,13 @@
+// prisma-client.provider.ts
 import { Pool } from 'pg';
-import { PrismaClient } from '@/prisma/client';
+import { PrismaClient } from '@/generated/prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { readReplicas } from '@prisma/extension-read-replicas';
-import { loadEnv } from '@/shared/config/load-env';
-
-loadEnv();
-
-const DATABASE_URL = process.env.DATABASE_URL;
-const REPLICA_DATABASE_URL = process.env.DATABASE_REPLICA_URL;
-
-if (!DATABASE_URL) {
-  throw new Error('DATABASE_URL is not defined in environment variables');
-}
-
-if (!REPLICA_DATABASE_URL) {
-  throw new Error(
-    'DATABASE_REPLICA_URL is not defined in environment variables',
-  );
-}
-
-// Export for other consumers if needed
-export { DATABASE_URL, REPLICA_DATABASE_URL };
+import {
+  ACTUAL_DATABASE_URL,
+  ACTUAL_REPLICA_DATABASE_URL,
+  IS_PRODUCTION_DB,
+} from '@/shared/prisma/database.config';
 
 type PrismaClientType = ReturnType<typeof createPrisma>;
 
@@ -30,11 +17,16 @@ declare global {
 
 function createPrisma() {
   console.log('PrismaProvider: Creating Prisma Client...');
-  console.log(`� Connecting to DB...`, DATABASE_URL, REPLICA_DATABASE_URL); // Generic log message since we trust the env now
 
-  const mainPool = new Pool({ connectionString: DATABASE_URL });
+  if (IS_PRODUCTION_DB) {
+    console.log('🔴 Using PRODUCTION database (USE_PRODUCTION_DB is enabled)');
+  } else {
+    console.log('🟢 Using LOCAL database (default)');
+  }
+
+  const mainPool = new Pool({ connectionString: ACTUAL_DATABASE_URL });
   const replicaPool = new Pool({
-    connectionString: REPLICA_DATABASE_URL,
+    connectionString: ACTUAL_REPLICA_DATABASE_URL,
   });
 
   const mainAdapter = new PrismaPg(mainPool);

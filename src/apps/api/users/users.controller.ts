@@ -16,7 +16,7 @@ import { CurrentUser } from '@/apps/api/auth/decorators/current-user.decorator';
 import { CreateUserStyleProfileDto } from '@/shared/users-service/dto/create-user-style-profile.dto';
 import { UpdateUserDto } from '@/shared/users-service/dto/update-user.dto';
 import { UserMapper } from '@/shared/users-service/mappers/user.mapper';
-import type { User } from '@/prisma/client';
+import type { User } from '@/generated/prisma/client';
 
 @Controller('users')
 export class UsersController {

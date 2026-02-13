@@ -1,5 +1,43 @@
+/*
+  Warnings:
+
+  - You are about to drop the column `basic_scraped` on the `products` table. All the data in the column will be lost.
+  - You are about to drop the column `full_scraped` on the `products` table. All the data in the column will be lost.
+
+*/
+-- CreateEnum
+CREATE TYPE "ScrapStatus" AS ENUM ('basic', 'detailed');
+
+-- CreateEnum
+CREATE TYPE "ScrapeState" AS ENUM ('idle', 'in_progress', 'failed');
+
 -- CreateEnum
 CREATE TYPE "CrawlStatus" AS ENUM ('idle', 'in_progress', 'completed', 'failed');
+
+-- DropIndex
+DROP INDEX "products_basic_scraped_idx";
+
+-- DropIndex
+DROP INDEX "products_full_scraped_idx";
+
+-- AlterTable
+ALTER TABLE "chat_state" ADD COLUMN     "intent_confidence" JSONB,
+ADD COLUMN     "last_cursor_score" DOUBLE PRECISION,
+ADD COLUMN     "mode" TEXT DEFAULT 'SEARCH';
+
+-- AlterTable
+ALTER TABLE "products" DROP COLUMN "basic_scraped",
+DROP COLUMN "full_scraped",
+ADD COLUMN     "fit" TEXT[],
+ADD COLUMN     "gender" TEXT,
+ADD COLUMN     "last_detailed_scraped_at" TIMESTAMP(3),
+ADD COLUMN     "last_scrape_attempt_at" TIMESTAMP(3),
+ADD COLUMN     "material" TEXT[],
+ADD COLUMN     "popularity" DOUBLE PRECISION DEFAULT 0,
+ADD COLUMN     "rating" DOUBLE PRECISION DEFAULT 0,
+ADD COLUMN     "scrap_status" "ScrapStatus" NOT NULL DEFAULT 'basic',
+ADD COLUMN     "scrape_state" "ScrapeState" NOT NULL DEFAULT 'idle',
+ADD COLUMN     "tsv" tsvector;
 
 -- CreateTable
 CREATE TABLE "crawl_progress" (
@@ -58,6 +96,15 @@ CREATE UNIQUE INDEX "chat_cursors_chat_id_query_hash_retailer_key" ON "chat_curs
 
 -- CreateIndex
 CREATE INDEX "product_queries_query_hash_retailer_idx" ON "product_queries"("query_hash", "retailer");
+
+-- CreateIndex
+CREATE INDEX "products_scrap_status_idx" ON "products"("scrap_status");
+
+-- CreateIndex
+CREATE INDEX "products_gender_idx" ON "products"("gender");
+
+-- CreateIndex
+CREATE INDEX "products_category_gender_idx" ON "products"("category", "gender");
 
 -- AddForeignKey
 ALTER TABLE "chat_cursors" ADD CONSTRAINT "chat_cursors_chat_id_fkey" FOREIGN KEY ("chat_id") REFERENCES "chats"("id") ON DELETE CASCADE ON UPDATE CASCADE;

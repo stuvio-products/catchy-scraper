@@ -15,10 +15,8 @@ export class BrowserClientScraper implements IScraper, OnModuleDestroy {
   private readonly apiKey: string;
 
   constructor(private readonly configService: ConfigService) {
-    const host =
-      this.configService.get<string>('BROWSER_SERVICE_HOST') || 'localhost';
     const port = this.configService.get<number>('BROWSER_SERVICE_PORT') || 3001;
-    const browserServiceUrl = `http://${host}:${port}`;
+    const browserServiceUrl = `http://browser-service:${port}`;
 
     this.apiKey =
       this.configService.get<string>('BROWSER_SERVICE_API_KEY') || '';
@@ -49,28 +47,20 @@ export class BrowserClientScraper implements IScraper, OnModuleDestroy {
 
       const timeout = scrapeRequest.options?.timeout || 30000;
 
-      const { statusCode, body, headers } = await this.client.request({
+      const { statusCode, body } = await this.client.request({
         path: '/browser/scrape',
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'X-API-Key': this.apiKey,
-          'User-Agent': 'PostmanRuntime/7.51.1',
         },
         body: JSON.stringify(scrapeRequest),
         headersTimeout: timeout,
         bodyTimeout: timeout,
       });
 
-      const contentType = headers['content-type'] as string;
-      let responseData: any;
-
-      if (contentType?.includes('application/json')) {
-        responseData = await body.json();
-      } else {
-        const text = await body.text();
-        responseData = { message: text };
-      }
+      // Parse JSON body securely
+      const responseData = (await body.json()) as any;
 
       const duration = Date.now() - startTime;
 
@@ -80,7 +70,7 @@ export class BrowserClientScraper implements IScraper, OnModuleDestroy {
           responseData?.error ||
           responseData?.message ||
           `HTTP Error ${statusCode}`;
-        throw new Error(`[Status ${statusCode}] ${errorMessage}`);
+        throw new Error(errorMessage);
       }
 
       this.logger.log(

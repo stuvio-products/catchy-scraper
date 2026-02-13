@@ -3,8 +3,8 @@ import {
   IScraper,
   ScrapeRequest,
   ScrapeResult,
-} from '@/shared/scraping/interfaces/scraper.interface';
-import { ScrapeStrategy } from '@/shared/domain/enums/scrape-strategy.enum';
+} from '../interfaces/scraper.interface';
+import { ScrapeStrategy } from '../../domain/enums/scrape-strategy.enum';
 import { request } from 'undici';
 
 @Injectable()
@@ -23,26 +23,10 @@ export class FetchScraper implements IScraper {
         headers: {
           'User-Agent':
             options?.userAgent ||
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
-          Accept:
-            'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-          'Accept-Language': 'en-US,en;q=0.9',
-          'sec-ch-ua':
-            '"Google Chrome";v="119", "Chromium";v="119", "Not?A_Brand";v="24"',
-          'sec-ch-ua-mobile': '?0',
-          'sec-ch-ua-platform': '"Windows"',
-          'sec-fetch-dest': 'document',
-          'sec-fetch-mode': 'navigate',
-          'sec-fetch-site': 'none',
-          'sec-fetch-user': '?1',
-          'upgrade-insecure-requests': '1',
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
         },
-        headersTimeout: options?.timeout || 30000,
+        headersTimeout: options?.timeout || 10000,
       });
-
-      if (response.statusCode >= 400) {
-        throw new Error(`HTTP Error: ${response.statusCode}`);
-      }
 
       const body = await response.body.text();
       const duration = Date.now() - startTime;

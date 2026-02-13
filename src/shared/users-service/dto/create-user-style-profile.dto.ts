@@ -1,15 +1,8 @@
-import {
-  IsArray,
-  IsEnum,
-  IsOptional,
-  IsString,
-  ValidateNested,
-} from 'class-validator';
+import { IsArray, IsEnum, IsOptional, IsString, ValidateNested } from 'class-validator';
 import { Type } from 'class-transformer';
 
-export class SizePreferenceDto {
-  [key: string]: string | undefined;
 
+export class SizePreferenceDto {
   @IsOptional()
   @IsString()
   men?: string;
@@ -55,3 +48,4 @@ export class CreateUserStyleProfileDto {
   @IsString({ each: true })
   favoriteBrands?: string[];
 }
+

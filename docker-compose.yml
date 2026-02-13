@@ -1,126 +1,160 @@
-# =============================================================================
-# docker-compose.yml — Base service definitions (shared between dev & prod)
-# =============================================================================
-# Usage:
-#   Dev:  docker compose -f docker-compose.yml -f docker-compose.dev.yml up
-#   Prod: docker compose -f docker-compose.yml -f docker-compose.prod.yml up
-#
-# Or simply use: ./scripts/start.sh [--prod]
+version: '3.8'
 
 services:
-  # ─── PostgreSQL Primary ────────────────────────────────────────────────────
   db:
     image: pgvector/pgvector:pg16
-    container_name: ${PROJECT_NAME}-db
-    restart: unless-stopped
-    env_file:
-      - ${ENV_FILE:-.env}
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-      - ./postgres/primary/init.sh:/docker-entrypoint-initdb.d/init.sh
+    container_name: scraper-db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres123
+      POSTGRES_DB: catchy_db
     ports:
-      - "${DB_PORT}:5432"
+      - "5434:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./postgres/primary:/docker-entrypoint-initdb.d
+      - ./postgres/primary/pg_hba.conf:/etc/postgresql/pg_hba.conf
+    command: |
+      postgres
+      -c wal_level=replica
+      -c hot_standby=on
+      -c max_wal_senders=10
+      -c max_replication_slots=10
+      -c hot_standby_feedback=on
+      -c hba_file=/etc/postgresql/pg_hba.conf
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
       timeout: 5s
-      retries: 10
+      retries: 5
     networks:
-      - catchy-network
+      - scraper-network
 
-  # ─── PostgreSQL Replica ────────────────────────────────────────────────────
   db-replica:
     image: pgvector/pgvector:pg16
-    container_name: ${PROJECT_NAME}-db-replica
-    restart: unless-stopped
+    container_name: scraper-db-replica
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres123
+      POSTGRES_DB: catchy_db
+      PGUSER: replicator
+      PGPASSWORD: replicator_password
+    ports:
+      - "5435:5432"
+    volumes:
+      - postgres-replica-data:/var/lib/postgresql/data
+      - ./postgres/replica/init.sh:/init_replica.sh
     depends_on:
       db:
         condition: service_healthy
-    env_file:
-      - ${ENV_FILE:-.env}
-    volumes:
-      - postgres_replica_data:/var/lib/postgresql/data
-      - ./postgres/replica/init.sh:/docker-entrypoint-initdb.d/init.sh
-    ports:
-      - "${DB_REPLICA_PORT}:5432"
+    command: ["/bin/bash", "/init_replica.sh"]
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      test: ["CMD-SHELL", "pg_isready -U postgres -d catchy_db"]
       interval: 5s
       timeout: 5s
       retries: 10
     networks:
-      - catchy-network
+      - scraper-network
 
-  # ─── Redis ─────────────────────────────────────────────────────────────────
   redis:
     image: redis:7-alpine
-    container_name: ${PROJECT_NAME}-redis
-    restart: unless-stopped
-    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy noeviction
-    volumes:
-      - redis_data:/data
+    container_name: scraper-redis
     ports:
-      - "${REDIS_EXTERNAL_PORT}:6379"
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
       timeout: 3s
       retries: 5
     networks:
-      - catchy-network
+      - scraper-network
 
-  # ─── API Service (NestJS) ─────────────────────────────────────────────────
   api:
-    container_name: ${PROJECT_NAME}-api
-    restart: unless-stopped
+    build:
+      context: .
+      dockerfile: docker/api.Dockerfile
+    container_name: scraper-api
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: development
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      DATABASE_URL: postgresql://postgres:postgres123@db:5432/catchy_db?schema=public
+      API_PORT: 3000
+      API_KEY: dev-api-key-change-in-production
+      JWT_SECRET: your_jwt_secret
+      SECRET_SALT: your_secret_salt
+      BROWSER_SERVICE_PORT: 3001
+      BROWSER_SERVICE_API_KEY: internal-service-key
     depends_on:
       db:
         condition: service_healthy
       redis:
         condition: service_healthy
-    env_file:
-      - ${ENV_FILE:-.env}
-    ports:
-      - "${API_EXTERNAL_PORT}:${API_PORT}"
+    restart: unless-stopped
     networks:
-      - catchy-network
+      - scraper-network
 
-  # ─── Worker Service (NestJS) ───────────────────────────────────────────────
   worker:
-    container_name: ${PROJECT_NAME}-worker
-    restart: unless-stopped
+    build:
+      context: .
+      dockerfile: docker/worker.Dockerfile
+    environment:
+      NODE_ENV: development
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      DATABASE_URL: postgresql://postgres:postgres123@db:5432/catchy_db?schema=public
+      WORKER_CONCURRENCY: 4
+      BROWSER_SERVICE_PORT: 3001
+      BROWSER_SERVICE_API_KEY: internal-service-key
     depends_on:
       db:
         condition: service_healthy
       redis:
         condition: service_healthy
-    env_file:
-      - ${ENV_FILE:-.env}
-    networks:
-      - catchy-network
-
-  # ─── Browser Service (NestJS + Playwright) ─────────────────────────────────
-  browser-service:
-    container_name: ${PROJECT_NAME}-browser-service
+      browser-service:
+        condition: service_started
     restart: unless-stopped
-    depends_on:
-      redis:
-        condition: service_healthy
-    env_file:
-      - ${ENV_FILE:-.env}
-    ports:
-      - "${BROWSER_SERVICE_EXTERNAL_PORT}:${BROWSER_SERVICE_PORT}"
     networks:
-      - catchy-network
+      - scraper-network
+    deploy:
+      replicas: 2
+
+  browser-service:
+    build:
+      context: .
+      dockerfile: docker/browser.Dockerfile
+    container_name: scraper-browser-service
+    environment:
+      NODE_ENV: development
+      BROWSER_SERVICE_PORT: 3001
+      BROWSER_SERVICE_API_KEY: internal-service-key
+      API_KEY: dev-api-key-change-in-production
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      BROWSER_COUNT: 2
+      BROWSER_HEADLESS: "true"
+      BROWSER_TIMEOUT_MS: 30000
+      PROXY_PROVIDER: fake
+      FAKE_PROXY_COST_PER_MB: 0.001
+    ports:
+      - "3001:3001"
+    restart: unless-stopped
+    networks:
+      - scraper-network
+    deploy:
+      resources:
+        limits:
+          memory: 2G
 
 volumes:
-  postgres_data:
-    driver: local
-  postgres_replica_data:
-    driver: local
-  redis_data:
-    driver: local
+  postgres-data:
+  postgres-replica-data:
+  redis-data:
 
 networks:
-  catchy-network:
+  scraper-network:
     driver: bridge

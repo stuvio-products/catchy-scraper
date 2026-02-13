@@ -8,7 +8,7 @@ export class BrowserHealthService {
 
   constructor(private readonly browserPool: BrowserPoolService) {}
 
-  @Cron(CronExpression.EVERY_HOUR)
+  @Cron(CronExpression.EVERY_30_SECONDS)
   async performHealthCheck() {
     this.logger.debug('Performing browser pool health check...');
 
