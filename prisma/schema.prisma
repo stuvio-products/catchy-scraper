@@ -102,27 +102,33 @@ model UserStyleProfile {
 }
 
 model Product {
-  id                    String                       @id @default(uuid()) @db.Uuid
+  id                    String                      @id @default(uuid()) @db.Uuid
   title                 String
   description           String?
   brand                 String?
   category              String?
   color                 String[] // ["red", "maroon"]
   size                  String[] // ["S", "M", "L"]
-  styleTags             String[]                     @map("style_tags") // ["party", "summer", "evening"]
+  styleTags             String[]                    @map("style_tags") // ["party", "summer", "evening"]
+  material              String[] // ["cotton", "polyester"]
+  fit                   String[] // ["slim", "regular", "oversized"]
+  gender                String? // "men", "women", "unisex"
   price                 Int?
   retailer              String?
-  productUrl            String?                      @unique @map("product_url")
+  productUrl            String?                     @unique @map("product_url")
   images                String[] // array of URLs
-  inStock               Boolean                      @default(true) @map("in_stock")
-  scrapStatus           ScrapStatus                  @default(BASIC) @map("scrap_status")
-  scrapeState           ScrapeState                  @default(IDLE) @map("scrape_state")
-  lastScraped           DateTime?                    @map("last_scraped")
-  lastDetailedScrapedAt DateTime?                    @map("last_detailed_scraped_at")
-  lastScrapeAttemptAt   DateTime?                    @map("last_scrape_attempt_at")
-  embedding             Unsupported("vector(1536)")?
-  createdAt             DateTime                     @default(now()) @map("created_at")
-  updatedAt             DateTime                     @updatedAt @map("updated_at")
+  inStock               Boolean                     @default(true) @map("in_stock")
+  scrapStatus           ScrapStatus                 @default(BASIC) @map("scrap_status")
+  scrapeState           ScrapeState                 @default(IDLE) @map("scrape_state")
+  lastScraped           DateTime?                   @map("last_scraped")
+  lastDetailedScrapedAt DateTime?                   @map("last_detailed_scraped_at")
+  lastScrapeAttemptAt   DateTime?                   @map("last_scrape_attempt_at")
+  popularity            Float?                      @default(0)
+  rating                Float?                      @default(0)
+  embedding             Unsupported("vector(768)")?
+  tsv                   Unsupported("tsvector")?
+  createdAt             DateTime                    @default(now()) @map("created_at")
+  updatedAt             DateTime                    @updatedAt @map("updated_at")
   savedIn               SavedProduct[]
   queries               ProductQuery[]
 
@@ -132,6 +138,8 @@ model Product {
   @@index([price])
   @@index([inStock])
   @@index([scrapStatus])
+  @@index([gender])
+  @@index([category, gender])
   @@map("products")
 }
 
@@ -167,13 +175,13 @@ model Message {
 }
 
 model ChatState {
-  chatId           String                       @id @map("chat_id") @db.Uuid
-  currentQuery     String?                      @map("current_query")
+  chatId           String                      @id @map("chat_id") @db.Uuid
+  currentQuery     String?                     @map("current_query")
   filters          Json?
-  intentConfidence Json?                        @map("intent_confidence")
-  mode             String?                      @default("SEARCH")
-  lastCursorScore  Float?                       @map("last_cursor_score")
-  lastEmbedding    Unsupported("vector(1536)")? @map("last_embedding")
+  intentConfidence Json?                       @map("intent_confidence")
+  mode             String?                     @default("SEARCH")
+  lastCursorScore  Float?                      @map("last_cursor_score")
+  lastEmbedding    Unsupported("vector(768)")? @map("last_embedding")
 
   chat Chat @relation(fields: [chatId], references: [id], onDelete: Cascade)
 

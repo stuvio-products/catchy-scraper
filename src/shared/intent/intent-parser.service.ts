@@ -1,5 +1,15 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { GeminiService } from '@/shared/gemini/gemini.service';
+import {
+  IntentType,
+  StructuredIntent,
+  IntentAttributes,
+  OutfitSlots,
+} from './intent-types';
+
+// ============================================================================
+// Legacy types (kept for backward compatibility with SearchService)
+// ============================================================================
 
 export interface IntentFilters {
   priceMin?: number;
@@ -19,84 +29,100 @@ export interface IntentConfidence {
 }
 
 export interface SearchIntent {
-  rawQuery: string; // Exact user-typed query, never modified
-  normalizedQuery: string; // Core search terms WITH attributes (color, material), only price/filter syntax removed
+  rawQuery: string;
+  normalizedQuery: string;
   filters: IntentFilters;
   confidence: IntentConfidence;
 }
 
+// ============================================================================
+// LRU Cache for LLM responses (Stage C)
+// ============================================================================
+
+interface CacheEntry {
+  result: StructuredIntent;
+  timestamp: number;
+}
+
+const LLM_CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes
+const LLM_CACHE_MAX_SIZE = 200;
+
+// ============================================================================
+// SERVICE
+// ============================================================================
+
 @Injectable()
 export class IntentParserService {
   private readonly logger = new Logger(IntentParserService.name);
+  private readonly llmCache = new Map<string, CacheEntry>();
 
   constructor(private readonly geminiService: GeminiService) {}
 
   /**
-   * Parse user query into structured intent with confidence scores
+   * Stage C: LLM-based intent classification (fallback).
+   * Converts natural language → StructuredIntent with slots.
+   * Results are cached by normalized query.
    */
-  async parseSearchIntent(query: string): Promise<SearchIntent> {
+  async classifyAsStructuredIntent(query: string): Promise<StructuredIntent> {
+    const cacheKey = query.toLowerCase().trim();
+    const now = Date.now();
+
+    // Check cache
+    const cached = this.llmCache.get(cacheKey);
+    if (cached && now - cached.timestamp < LLM_CACHE_TTL_MS) {
+      this.logger.debug(`LLM intent cache hit for: "${query}"`);
+      return cached.result;
+    }
+
     const prompt = `
-    You are a precise search intent parser for an e-commerce fashion search engine.
+    You are a precise search intent parser for an Indian e-commerce fashion search engine.
     Analyze the query: "${query}"
 
-    Extract structured filters and assign confidence scores (0.0 - 1.0) based on these rules:
-    - Hard numeric constraints (e.g. "under 1000", "over 500") -> Confidence 0.9 - 1.0
-    - Explicit attributes (e.g. "white shirt", "nike shoes") -> Confidence 0.7 - 0.9
-    - Ambiguous terms (e.g. "cheap", "premium", "party wear") -> Confidence < 0.6
-    
-    Supported filters:
-    - priceMin, priceMax (numbers)
-    - color (string)
-    - category (string, e.g. "dress", "shoes")
-    - brand (string)
-    - retailer (string)
-
-    CRITICAL RULE for normalizedQuery:
-    - KEEP all descriptive words like colors, materials, styles in normalizedQuery.
-    - ONLY remove pure filter syntax like "under 1000", "above 500", "below 200".
-    - "white shirt under 1000" -> normalizedQuery = "white shirt" (NOT "shirt")
-    - "red nike shoes" -> normalizedQuery = "red nike shoes"
-    - "blue cotton dress below 2000" -> normalizedQuery = "blue cotton dress"
-    - The normalizedQuery MUST be usable as a retailer search query as-is.
-
-    Return JSON strictly matching this structure:
+    Return JSON with this exact structure:
     {
-      "normalizedQuery": "string (full search terms WITH attributes like color/material, only price syntax removed)",
-      "filters": { ... },
-      "confidence": {
-        "price": 0.0-1.0,
-        "color": 0.0-1.0,
-        "category": 0.0-1.0,
-        "brand": 0.0-1.0,
-        "overall": 0.0-1.0 (weighted average or minimum valid confidence)
+      "type": "product|filtered|occasion|contextual|exploratory",
+      "confidence": 0.0-1.0,
+      "normalizedQuery": "cleaned search terms (strip price syntax, keep colors/materials/styles)",
+      "attributes": {
+        "category": "optional string (shirt, dress, shoes, etc.)",
+        "style": "optional string (casual, formal, sporty, etc.)",
+        "occasion": "optional string (date, interview, party, gym, etc.)",
+        "gender": "optional string (men, women, unisex)",
+        "color": "optional string",
+        "material": "optional string (cotton, silk, polyester, etc.)",
+        "fit": "optional string (slim, regular, oversized, etc.)",
+        "season": "optional string (summer, winter, monsoon, etc.)",
+        "priceMin": "optional number",
+        "priceMax": "optional number",
+        "brand": "optional string"
+      },
+      "slots": {
+        "topwear": "optional search query for top",
+        "bottomwear": "optional search query for bottom",
+        "footwear": "optional search query for shoes",
+        "accessories": "optional search query for accessories"
       }
     }
 
-    Example 1:
-    Query: "white shirt under 1000"
-    Result:
-    {
-      "normalizedQuery": "white shirt",
-      "filters": { "color": "white", "priceMax": 1000, "category": "shirt" },
-      "confidence": { "price": 0.95, "color": 0.9, "category": 0.9, "overall": 0.92 }
-    }
+    Rules:
+    - For occasion queries like "I am going on a date", populate slots with specific product queries
+    - For direct product queries like "red shirt", set type to "product" and populate attributes
+    - normalizedQuery must be usable as a direct retailer search query
+    - Only populate slots when the query implies an outfit need (occasion/contextual)
+    - Confidence should reflect how certain you are about the classification
 
-    Example 2:
-    Query: "running shoes"
-    Result:
-    {
-      "normalizedQuery": "running shoes",
-      "filters": { "category": "shoes" },
-      "confidence": { "category": 0.8, "overall": 0.8 }
-    }
-
-    Example 3:
-    Query: "something nice for party"
-    Result:
-    {
-      "normalizedQuery": "party wear",
-      "filters": {},
-      "confidence": { "overall": 0.4 }
+    Example:
+    Query: "I am going on a date"
+    Result: {
+      "type": "occasion",
+      "confidence": 0.85,
+      "normalizedQuery": "date night outfit",
+      "attributes": { "occasion": "date", "style": "smart casual" },
+      "slots": {
+        "topwear": "slim fit shirt",
+        "bottomwear": "chinos",
+        "footwear": "casual shoes"
+      }
     }
     `;
 
@@ -105,27 +131,124 @@ export class IntentParserService {
       const cleanJson = response.replace(/```json\n|\n```/g, '').trim();
       const parsed = JSON.parse(cleanJson);
 
-      return {
-        rawQuery: query,
+      const result: StructuredIntent = {
+        type: this.mapIntentType(parsed.type),
+        confidence: parsed.confidence ?? 0.5,
+        attributes: this.sanitizeAttributes(parsed.attributes || {}),
+        slots: this.sanitizeSlots(parsed.slots),
+        resolvedBy: 'llm',
         normalizedQuery: parsed.normalizedQuery || query,
-        filters: parsed.filters || {},
-        confidence: {
-          price: parsed.confidence?.price,
-          color: parsed.confidence?.color,
-          category: parsed.confidence?.category,
-          brand: parsed.confidence?.brand,
-          overall: parsed.confidence?.overall || 0.5,
-        },
-      };
-    } catch (e) {
-      this.logger.error(`Intent parsing failed for "${query}": ${e.message}`);
-      // Fallback: raw query, no filters, low confidence
-      return {
         rawQuery: query,
-        normalizedQuery: query,
-        filters: {},
-        confidence: { overall: 0.5 },
       };
+
+      // Cache it
+      this.evictStaleCache();
+      this.llmCache.set(cacheKey, { result, timestamp: now });
+
+      return result;
+    } catch (e) {
+      this.logger.error(
+        `LLM intent parsing failed for "${query}": ${e.message}`,
+      );
+      return {
+        type: IntentType.EXPLORATORY,
+        confidence: 0.3,
+        attributes: {},
+        resolvedBy: 'llm',
+        normalizedQuery: query,
+        rawQuery: query,
+      };
+    }
+  }
+
+  /**
+   * Legacy method — kept for backward compatibility.
+   * Used by existing SearchService.searchWithIntent (until refactored).
+   */
+  async parseSearchIntent(query: string): Promise<SearchIntent> {
+    const structured = await this.classifyAsStructuredIntent(query);
+    return {
+      rawQuery: query,
+      normalizedQuery: structured.normalizedQuery,
+      filters: {
+        priceMin: structured.attributes.priceMin,
+        priceMax: structured.attributes.priceMax,
+        color: structured.attributes.color,
+        category: structured.attributes.category,
+        brand: structured.attributes.brand,
+      },
+      confidence: {
+        overall: structured.confidence,
+      },
+    };
+  }
+
+  // --- Private helpers ---
+
+  private mapIntentType(type: string): IntentType {
+    const map: Record<string, IntentType> = {
+      product: IntentType.PRODUCT,
+      filtered: IntentType.FILTERED,
+      occasion: IntentType.OCCASION,
+      contextual: IntentType.CONTEXTUAL,
+      exploratory: IntentType.EXPLORATORY,
+    };
+    return map[type?.toLowerCase()] || IntentType.EXPLORATORY;
+  }
+
+  private sanitizeAttributes(attrs: any): IntentAttributes {
+    const result: IntentAttributes = {};
+    if (attrs.category) result.category = String(attrs.category);
+    if (attrs.style) result.style = String(attrs.style);
+    if (attrs.occasion) result.occasion = String(attrs.occasion);
+    if (attrs.gender) result.gender = String(attrs.gender);
+    if (attrs.color) result.color = String(attrs.color);
+    if (attrs.material) result.material = String(attrs.material);
+    if (attrs.fit) result.fit = String(attrs.fit);
+    if (attrs.season) result.season = String(attrs.season);
+    if (attrs.brand) result.brand = String(attrs.brand);
+    if (attrs.priceMin != null && !isNaN(Number(attrs.priceMin)))
+      result.priceMin = Number(attrs.priceMin);
+    if (attrs.priceMax != null && !isNaN(Number(attrs.priceMax)))
+      result.priceMax = Number(attrs.priceMax);
+    return result;
+  }
+
+  private sanitizeSlots(slots: any): OutfitSlots | undefined {
+    if (!slots) return undefined;
+    const result: OutfitSlots = {};
+    let hasAny = false;
+    if (slots.topwear) {
+      result.topwear = String(slots.topwear);
+      hasAny = true;
+    }
+    if (slots.bottomwear) {
+      result.bottomwear = String(slots.bottomwear);
+      hasAny = true;
+    }
+    if (slots.footwear) {
+      result.footwear = String(slots.footwear);
+      hasAny = true;
+    }
+    if (slots.accessories) {
+      result.accessories = String(slots.accessories);
+      hasAny = true;
+    }
+    return hasAny ? result : undefined;
+  }
+
+  private evictStaleCache(): void {
+    if (this.llmCache.size < LLM_CACHE_MAX_SIZE) return;
+    const now = Date.now();
+    for (const [key, entry] of this.llmCache) {
+      if (now - entry.timestamp > LLM_CACHE_TTL_MS) {
+        this.llmCache.delete(key);
+      }
+    }
+    // If still over limit, remove oldest
+    if (this.llmCache.size >= LLM_CACHE_MAX_SIZE) {
+      const firstKey = this.llmCache.keys().next().value;
+      if (firstKey) this.llmCache.delete(firstKey);
     }
   }
 }
