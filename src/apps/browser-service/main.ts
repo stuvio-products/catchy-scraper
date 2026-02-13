@@ -2,6 +2,7 @@ import { NestFactory } from '@nestjs/core';
 import { ValidationPipe, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { BrowserServiceAppModule } from './app.module';
+import { setupGracefulShutdown } from '@/shared/utils/graceful-shutdown';
 
 async function bootstrap() {
   const logger = new Logger('BrowserService');
@@ -19,8 +20,9 @@ async function bootstrap() {
     }),
   );
 
+  // ...
   // Graceful shutdown
-  app.enableShutdownHooks();
+  await setupGracefulShutdown(app);
 
   await app.listen(port);
   logger.log(`🌐 Browser Service running on http://localhost:${port}`);

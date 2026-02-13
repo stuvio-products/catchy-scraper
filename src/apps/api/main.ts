@@ -8,6 +8,8 @@ import {
 import multipart from '@fastify/multipart';
 import { ApiAppModule } from './app.module';
 
+import { setupGracefulShutdown } from '@/shared/utils/graceful-shutdown';
+
 async function bootstrap() {
   const app = await NestFactory.create<NestFastifyApplication>(
     ApiAppModule,
@@ -31,7 +33,11 @@ async function bootstrap() {
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
     credentials: true,
   });
+
+  // ...
   app.useGlobalPipes(new ValidationPipe({ transform: true, whitelist: true }));
+
+  await setupGracefulShutdown(app);
 
   await app.listen(process.env.PORT ?? 3000, '0.0.0.0');
 }

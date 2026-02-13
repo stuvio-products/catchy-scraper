@@ -82,6 +82,9 @@ services:
       - ${ENV_FILE:-.env}
     ports:
       - "${API_EXTERNAL_PORT}:${API_PORT}"
+    stop_signal: SIGTERM
+    stop_grace_period: 5s
+    init: true
     networks:
       - catchy-network
 
@@ -96,6 +99,9 @@ services:
         condition: service_healthy
     env_file:
       - ${ENV_FILE:-.env}
+    stop_signal: SIGTERM
+    stop_grace_period: 5s
+    init: true
     networks:
       - catchy-network
 
@@ -110,6 +116,9 @@ services:
       - ${ENV_FILE:-.env}
     ports:
       - "${BROWSER_SERVICE_EXTERNAL_PORT}:${BROWSER_SERVICE_PORT}"
+    stop_signal: SIGTERM
+    stop_grace_period: 5s
+    init: true
     networks:
       - catchy-network
 

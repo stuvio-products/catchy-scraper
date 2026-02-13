@@ -7,7 +7,10 @@ FROM node:20-slim AS base
 RUN apt-get update && apt-get install -y \
     openssl \
     ca-certificates \
+    tini \
     && rm -rf /var/lib/apt/lists/*
+
+ENTRYPOINT ["/usr/bin/tini", "--"]
 
 WORKDIR /app
 
