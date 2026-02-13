@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { Chat, Message, MessageRole, ChatState } from '@prisma/client';
+import { Chat, Message, MessageRole, ChatState } from '@/prisma/client';
 import { GeminiService } from '@/shared/gemini/gemini.service';
 import { ChatRepository } from './chat.repository';
 

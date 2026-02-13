@@ -11,7 +11,7 @@ import { ParserService } from '@/shared/scraping/services/parser.service';
 import { ProductSaveService } from '@/shared/scraping/services/product-save.service';
 import { CrawlProgressService } from '@/shared/scraping/services/crawl-progress.service';
 import { BrowserClientScraper } from '@/shared/scraping/scrapers/browser-client.scraper';
-import { ScrapStatus, MessageRole } from '@prisma/client';
+import { ScrapStatus, MessageRole } from '@/prisma/client';
 import { getEnumKeyAsType } from '@/shared/lib/util';
 import { ChatService } from '@/apps/api/chat/chat.service';
 import { randomUUID, createHash } from 'crypto';
@@ -21,7 +21,7 @@ import {
   SearchIntent,
   IntentFilters,
 } from '@/shared/intent/intent-parser.service';
-import { ChatState } from '@prisma/client';
+import { ChatState } from '@/prisma/client';
 
 // ============================================================================
 // TYPE DEFINITIONS

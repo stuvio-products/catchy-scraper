@@ -14,7 +14,7 @@ import { ResetPasswordDto } from './dto/reset-password.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetForgottenPasswordDto } from './dto/reset-forgotten-password.dto';
 import { OtpService } from './otp/otp.service';
-import { OtpType } from '@prisma/client';
+import { OtpType } from '@/prisma/client';
 import { MailService } from '@/shared/mail/mail.service';
 import { UserLogsRepository } from '@/shared/user-logs/user-logs.repository';
 
@@ -41,7 +41,8 @@ export class AuthService {
     }
 
     if (username) {
-      const existingUsername = await this.usersRepository.findByUsername(username);
+      const existingUsername =
+        await this.usersRepository.findByUsername(username);
       if (existingUsername) {
         throw new ConflictException('Username is already taken');
       }

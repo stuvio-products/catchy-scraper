@@ -9,7 +9,7 @@ import { ParserService } from '@/shared/scraping/services/parser.service';
 import { ProductSaveService } from '@/shared/scraping/services/product-save.service';
 import { CrawlProgressService } from '@/shared/scraping/services/crawl-progress.service';
 import { getEnumKeyAsType } from '@/shared/lib/util';
-import { ScrapStatus } from '@prisma/client';
+import { ScrapStatus } from '@/prisma/client';
 
 @Processor(QUEUE_NAMES.SCRAPE_QUEUE)
 export class ScrapeProcessor extends WorkerHost {

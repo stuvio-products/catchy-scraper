@@ -2,7 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.prisma = void 0;
 const pg_1 = require("pg");
-const client_1 = require("@prisma/client");
+const client_1 = require("@/prisma/client");
 const adapter_pg_1 = require("@prisma/adapter-pg");
 const extension_read_replicas_1 = require("@prisma/extension-read-replicas");
 const database_config_1 = require("./database.config");

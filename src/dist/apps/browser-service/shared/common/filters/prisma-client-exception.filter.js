@@ -10,7 +10,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.PrismaClientExceptionFilter = void 0;
 const common_1 = require("@nestjs/common");
 const core_1 = require("@nestjs/core");
-const client_1 = require("@prisma/client");
+const client_1 = require("@/prisma/client");
 let PrismaClientExceptionFilter = PrismaClientExceptionFilter_1 = class PrismaClientExceptionFilter extends core_1.BaseExceptionFilter {
     logger = new common_1.Logger(PrismaClientExceptionFilter_1.name);
     catch(exception, host) {

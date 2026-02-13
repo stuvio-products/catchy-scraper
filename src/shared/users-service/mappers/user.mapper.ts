@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { User, UserStyleProfile } from '@prisma/client';
+import { User, UserStyleProfile } from '@/prisma/client';
 import { UserWithStyleProfile } from '../entities/user.entity';
 
 export interface UserDto {
@@ -62,7 +62,8 @@ export class UserMapper {
       topSize: (styleProfile.topSize as unknown as SizePreference) ?? undefined,
       bottomSize:
         (styleProfile.bottomSize as unknown as SizePreference) ?? undefined,
-      shoeSize: (styleProfile.shoeSize as unknown as SizePreference) ?? undefined,
+      shoeSize:
+        (styleProfile.shoeSize as unknown as SizePreference) ?? undefined,
       favoriteBrands: styleProfile.favoriteBrands as string[],
     };
   }

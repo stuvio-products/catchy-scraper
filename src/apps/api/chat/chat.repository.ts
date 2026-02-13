@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '@/shared/prisma/prisma.service';
-import { Chat, Message, MessageRole, ChatState } from '@prisma/client';
+import { Chat, Message, MessageRole, ChatState } from '@/prisma/client';
 import { getEnumKeyAsType } from '@/shared/lib/util';
 
 export interface UpdateStateData {

@@ -7,7 +7,7 @@ import { ScrapeOrchestratorService } from '@/shared/scraping/services/scrape-orc
 import { ProductSaveService } from '@/shared/scraping/services/product-save.service';
 import { ScrapeLockService } from '@/shared/scraping/services/scrape-lock.service';
 import { PrismaService } from '@/shared/prisma/prisma.service';
-import { ScrapStatus, ScrapeState } from '@prisma/client';
+import { ScrapStatus, ScrapeState } from '@/prisma/client';
 import { ParserService } from '@/shared/scraping/services/parser.service';
 import { getEnumKeyAsType } from '@/shared/lib/util';
 

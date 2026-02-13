@@ -1,6 +1,6 @@
 import { Injectable, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '@/shared/prisma/prisma.service';
-import { OtpType } from '@prisma/client';
+import { OtpType } from '@/prisma/client';
 import { getEnumKeyAsType } from '@/shared/lib/util';
 import * as bcrypt from 'bcrypt';
 import * as crypto from 'crypto';

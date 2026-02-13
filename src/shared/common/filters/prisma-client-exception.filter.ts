@@ -1,7 +1,12 @@
-
-import { ArgumentsHost, Catch, ExceptionFilter, HttpStatus, Logger } from '@nestjs/common';
+import {
+  ArgumentsHost,
+  Catch,
+  ExceptionFilter,
+  HttpStatus,
+  Logger,
+} from '@nestjs/common';
 import { BaseExceptionFilter } from '@nestjs/core';
-import { Prisma } from '@prisma/client';
+import { Prisma } from '@/prisma/client';
 import { Response } from 'express'; // or fastify
 
 // Since we are using Fastify (checked via main.ts), we handle response accordingly.
@@ -25,35 +30,35 @@ export class PrismaClientExceptionFilter extends BaseExceptionFilter {
       case 'P2025': {
         const status = HttpStatus.NOT_FOUND;
         const message = exception.message.replace(/\n/g, '');
-        
+
         // Fastify response handling
         if (response.status && typeof response.send === 'function') {
-           response.status(status).send({
-              statusCode: status,
-              message: `Record not found`, // Cleaner message
-              error: 'Not Found',
-              path: request.url,
-              timestamp: new Date().toISOString(),
-           });
+          response.status(status).send({
+            statusCode: status,
+            message: `Record not found`, // Cleaner message
+            error: 'Not Found',
+            path: request.url,
+            timestamp: new Date().toISOString(),
+          });
         } else {
-            super.catch(exception, host);
+          super.catch(exception, host);
         }
         break;
       }
       case 'P2002': {
         const status = HttpStatus.CONFLICT;
         const message = exception.message.replace(/\n/g, '');
-        
+
         if (response.status && typeof response.send === 'function') {
-           response.status(status).send({
+          response.status(status).send({
             statusCode: status,
             message: 'Unique constraint violation',
             error: 'Conflict',
             path: request.url,
             timestamp: new Date().toISOString(),
-           });
+          });
         } else {
-             super.catch(exception, host);
+          super.catch(exception, host);
         }
         break;
       }

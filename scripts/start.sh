@@ -131,6 +131,7 @@ else
     PROJECT_NAME="catchy-dev"
 fi
 export PROJECT_NAME
+export ENV_FILE
 
 COMPOSE_CMD="docker compose -p $PROJECT_NAME --env-file $ENV_FILE -f docker-compose.yml -f $COMPOSE_OVERRIDE"
 

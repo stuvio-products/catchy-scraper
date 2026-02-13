@@ -45,3 +45,6 @@ redis_data/
 
 # Backups
 backups/
+
+# Generated Prisma files
+src/generated/prisma

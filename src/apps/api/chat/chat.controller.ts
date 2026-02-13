@@ -14,7 +14,7 @@ import { SearchService } from '@/apps/api/search/search.service';
 import { ChatCursorService } from '@/shared/scraping/services/chat-cursor.service';
 import { getEnumKeyAsType } from '@/shared/lib/util';
 import { SendMessageDto } from './dto/chat.dto';
-import { MessageRole } from '@prisma/client';
+import { MessageRole } from '@/prisma/client';
 import { UseGuards, UnauthorizedException } from '@nestjs/common';
 import { JwtAuthGuard } from '@/apps/api/auth/guards/jwt-auth.guard';
 import { CurrentUser } from '@/apps/api/auth/decorators/current-user.decorator';

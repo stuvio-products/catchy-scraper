@@ -1,4 +1,4 @@
-import { User } from '@prisma/client';
+import { User } from '@/prisma/client';
 
 export class GoogleResponse {
   sub: string;
@@ -30,13 +30,13 @@ export class UserWithToken {
 
 export type RequestUser = Pick<
   User,
-  'id' |
-    'email' |
-    'username' |
-    'firstName' |
-    'lastName' |
-    'bio' |
-    'phone' |
-    'profileImage' |
-    'createdAt'
+  | 'id'
+  | 'email'
+  | 'username'
+  | 'firstName'
+  | 'lastName'
+  | 'bio'
+  | 'phone'
+  | 'profileImage'
+  | 'createdAt'
 >;

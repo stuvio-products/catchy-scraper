@@ -14,6 +14,7 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 COPY prisma ./prisma/
 COPY prisma.config.ts ./
+COPY src/shared/config/load-env.ts ./src/shared/config/load-env.ts
 
 # =============================================================================
 # Stage 2: Dependencies — install all node_modules
