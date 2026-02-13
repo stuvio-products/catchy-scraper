@@ -53,9 +53,10 @@ export class BrowserPoolService implements OnModuleInit, OnModuleDestroy {
     );
 
     try {
-      for (let i = 0; i < this.browserCount; i++) {
-        await this.launchBrowser();
-      }
+      const launchPromises = Array.from({ length: this.browserCount }).map(() =>
+        this.launchBrowser(),
+      );
+      await Promise.all(launchPromises);
 
       this.logger.log(
         `Browser pool initialized with ${this.browsers.size} browsers`,
@@ -71,14 +72,18 @@ export class BrowserPoolService implements OnModuleInit, OnModuleDestroy {
   async onModuleDestroy() {
     this.logger.log('Shutting down browser pool...');
 
-    for (const [id, instance] of this.browsers.entries()) {
-      try {
-        await instance.browser.close();
-        this.logger.debug(`Closed browser ${id}`);
-      } catch (error) {
-        this.logger.error(`Failed to close browser ${id}: ${error.message}`);
-      }
-    }
+    const closePromises = Array.from(this.browsers.entries()).map(
+      async ([id, instance]) => {
+        try {
+          await instance.browser.close();
+          this.logger.debug(`Closed browser ${id}`);
+        } catch (error) {
+          this.logger.error(`Failed to close browser ${id}: ${error.message}`);
+        }
+      },
+    );
+
+    await Promise.all(closePromises);
 
     this.browsers.clear();
     this.logger.log('Browser pool shutdown complete');

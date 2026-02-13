@@ -27,7 +27,7 @@ import {
   IntentType,
   OutfitSlots,
 } from '@/shared/intent/intent-types';
-import { ChatState } from '@prisma/client';
+import { ChatState } from '@/prisma/client';
 
 // ============================================================================
 // TYPE DEFINITIONS
