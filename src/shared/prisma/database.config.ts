@@ -11,15 +11,10 @@ const useProductionDb =
     process.env.USE_PRODUCTION_DB === '1');
 
 // Determine which DATABASE_URL to use
-const databaseUrl = useProductionDb
-  ? process.env.PRODUCTION_DATABASE_URL || process.env.DATABASE_URL
-  : process.env.DATABASE_URL;
+const databaseUrl = process.env.DATABASE_URL;
 
 // Determine which DATABASE_REPLICA_URL to use
-const replicaUrl = useProductionDb
-  ? process.env.PRODUCTION_DATABASE_REPLICA_URL ||
-    process.env.DATABASE_REPLICA_URL
-  : process.env.DATABASE_REPLICA_URL;
+const replicaUrl = process.env.DATABASE_REPLICA_URL;
 
 // Validate and throw errors if URLs are missing
 if (!databaseUrl) {

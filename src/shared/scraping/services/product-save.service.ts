@@ -115,7 +115,19 @@ export class ProductSaveService {
         return;
       }
 
-      const textToEmbed = `${product.title}`;
+      // Style-focused embedding text (exclude category/brand for better semantic matching)
+      // Casting to any because running containers might have stale Prisma client types
+      const p = product;
+      const textToEmbed = [
+        p.title,
+        ...(p.fit || []),
+        ...(p.material || []),
+        ...(p.styleTags || []),
+        ...(p.color || []),
+        (p.description || '').slice(0, 120),
+      ]
+        .filter(Boolean)
+        .join(' ');
       const embedding = await this.gemini.generateEmbedding(textToEmbed);
       const vectorString = `[${embedding.join(',')}]`;
 

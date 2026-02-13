@@ -21,6 +21,12 @@ import {
   SearchIntent,
   IntentFilters,
 } from '@/shared/intent/intent-parser.service';
+import { IntentInterpreterService } from '@/shared/intent/intent-interpreter.service';
+import {
+  StructuredIntent,
+  IntentType,
+  OutfitSlots,
+} from '@/shared/intent/intent-types';
 import { ChatState } from '@prisma/client';
 
 // ============================================================================
@@ -40,6 +46,10 @@ interface ProductSearchResult {
   scrapStatus: string;
   lastScraped: Date | null;
   similarity: number;
+  lexicalScore?: number;
+  semanticScore?: number;
+  popularity?: number;
+  rating?: number;
 }
 
 interface CountResult {
@@ -52,8 +62,6 @@ interface EmbeddingCacheEntry {
   accessCount: number;
 }
 
-// ScrapeTrackingKey removed — scrape tracking is now in CrawlProgress DB table
-
 // ============================================================================
 // CONSTANTS
 // ============================================================================
@@ -65,16 +73,15 @@ const SEARCH_CONSTANTS = {
   SCRAPE_LOCK_TTL_MS: 5 * 60 * 1000, // 5 minutes
   STALE_PRODUCT_THRESHOLD_MS: 24 * 60 * 60 * 1000, // 1 day
   PRODUCT_BATCH_SIZE: 10,
-  LAZY_SCRAPE_TOP_N: 20, // Only scrape top N visible products lazily
+  LAZY_SCRAPE_TOP_N: 20,
   PREEMPTIVE_SCRAPE_THRESHOLD_PAGES: 2,
   SCRAPE_TIMEOUT_MS: 30000,
   MEESHO_SCROLL_ITERATIONS_PAGE_1: 8,
   MEESHO_SCROLL_ITERATIONS_PAGE_2: 16,
-  // Live enrichment for first page (critical UX)
-  LIVE_ENRICH_TOP_N: 10, // Top N products to enrich live on first page
-  LIVE_ENRICH_TIMEOUT_MS: 1000, // Hard timeout per product (1s for sub-second UX)
-  LIVE_ENRICH_CONCURRENCY: 10, // Max concurrent live scrapes
-  LIVE_ENRICH_FRESHNESS_MS: 24 * 60 * 60 * 1000, // Skip if detailed within 24h
+  LIVE_ENRICH_TOP_N: 10,
+  LIVE_ENRICH_TIMEOUT_MS: 1000,
+  LIVE_ENRICH_CONCURRENCY: 10,
+  LIVE_ENRICH_FRESHNESS_MS: 24 * 60 * 60 * 1000,
 } as const;
 
 const RETAILERS = {
@@ -97,7 +104,6 @@ class LRUCache<K, V> {
   get(key: K): V | undefined {
     const value = this.cache.get(key);
     if (value !== undefined) {
-      // Move to end (most recently used)
       this.accessOrder = this.accessOrder.filter((k) => k !== key);
       this.accessOrder.push(key);
     }
@@ -106,14 +112,11 @@ class LRUCache<K, V> {
 
   set(key: K, value: V): void {
     if (this.cache.has(key)) {
-      // Update existing
       this.cache.set(key, value);
       this.accessOrder = this.accessOrder.filter((k) => k !== key);
       this.accessOrder.push(key);
     } else {
-      // Add new
       if (this.cache.size >= this.maxSize) {
-        // Evict least recently used
         const lru = this.accessOrder.shift();
         if (lru !== undefined) {
           this.cache.delete(lru);
@@ -146,12 +149,10 @@ class LRUCache<K, V> {
 export class SearchService {
   private readonly logger = new Logger(SearchService.name);
 
-  // LRU-based embedding cache
   private readonly embeddingCache = new LRUCache<string, EmbeddingCacheEntry>(
     SEARCH_CONSTANTS.EMBEDDING_CACHE_MAX_SIZE,
   );
 
-  // Track in-flight embedding requests to prevent concurrent generation
   private readonly embeddingInflight = new Map<string, Promise<number[]>>();
 
   constructor(
@@ -167,6 +168,7 @@ export class SearchService {
     private readonly chatService: ChatService,
     private readonly browserClientScraper: BrowserClientScraper,
     private readonly intentParserService: IntentParserService,
+    private readonly intentInterpreterService: IntentInterpreterService,
   ) {}
 
   // ==========================================================================
@@ -174,80 +176,127 @@ export class SearchService {
   // ==========================================================================
 
   /**
-   * New Entry Point: Intent-Aware Search Orchestrator
-   * - Parses intent & confidence
-   * - Creates chat session
-   * - Triggers DB search (products exist?) OR Live search (no products?)
-   * - Returns ONLY chatId (no products)
+   * Intent-Aware Search Orchestrator (DB-ONLY — no live scraping in this path)
+   *
+   * 1. Interprets intent via 3-stage pipeline
+   * 2. Creates chat session
+   * 3. Searches DB catalog
+   * 4. If no results → returns catalogStatus: 'learning' + triggers background enrichment
+   * 5. If multi-slot → runs parallel slot queries
    */
   async searchWithIntent(
     userId: string,
     query: string,
     explicitFilters?: IntentFilters,
-  ): Promise<{ chatId: string; message: string }> {
-    // 1. Parse Intent & Confidence
-    const intent = await this.intentParserService.parseSearchIntent(query);
+  ): Promise<{
+    chatId: string;
+    message: string;
+    catalogStatus?: string;
+    intentType?: string;
+    confidence?: number;
+    slotOrder?: string[];
+    slotResults?: Record<string, any>;
+  }> {
+    // 1. Interpret Intent via 3-stage pipeline
+    const intent = await this.intentInterpreterService.interpret(query);
 
-    // 2. Merge Explicit Filters (override intent) — these are for DB filtering only, NOT retailer URLs
-    const finalFilters = { ...intent.filters, ...explicitFilters };
+    // 2. Build filters from intent attributes + explicit overrides
+    const intentFilters: IntentFilters = {
+      priceMin: intent.attributes.priceMin,
+      priceMax: intent.attributes.priceMax,
+      color: intent.attributes.color,
+      category: intent.attributes.category,
+      brand: intent.attributes.brand,
+    };
+    const finalFilters = { ...intentFilters, ...explicitFilters };
 
-    // 3. Create Chat Session — store the RAW user query, not normalized
-    //    This ensures chat UI reflects exactly what the user typed
+    // 3. Create Chat Session — store the RAW user query
     const chat = await this.chatService.createChat(
       userId,
-      query, // <-- raw query, not intent.normalizedQuery
+      query,
       finalFilters,
-      intent.confidence,
+      { overall: intent.confidence },
       'SEARCH',
     );
 
-    // Note: createChat already persists the initial user message via repository
-
-    // 4. Generate Embedding for the full query (with attributes) for later similarity expansion
+    // 4. Generate embedding for similarity search
     const embedding = await this.getOrGenerateEmbedding(query);
 
-    // 5. Check if products already exist in DB
+    // 5. Check if products exist in DB
     const hasResults = await this.checkProductExistence(
       embedding,
       finalFilters,
-      intent.confidence.overall,
+      intent.confidence,
     );
 
     let message = 'Here are the products matching your query';
+    let catalogStatus: string | undefined;
 
     if (hasResults) {
       this.logger.log(
-        `Products found in DB for "${query}". Enqueuing detailed checks.`,
+        `Products found in DB for "${query}" (intent: ${intent.type}, resolved by: ${intent.resolvedBy}).`,
       );
-      await this.triggerRefreshesForTopResults(
-        embedding,
-        finalFilters,
-        intent.confidence.overall,
-      );
+
+      // If multi-slot intent → parallel slot search
+      if (intent.slots && Object.keys(intent.slots).length > 1) {
+        const slotResults = await this.searchSlots(intent.slots, finalFilters);
+        const slotOrder = Object.keys(intent.slots).filter(
+          (k) => intent.slots![k as keyof OutfitSlots],
+        );
+
+        await this.chatService.addMessage(
+          chat.id,
+          getEnumKeyAsType(MessageRole, MessageRole.ASSISTANT) as MessageRole,
+          message,
+        );
+
+        return {
+          chatId: chat.id,
+          message,
+          intentType: intent.type,
+          confidence: intent.confidence,
+          slotOrder,
+          slotResults,
+        };
+      }
     } else {
       this.logger.log(
-        `No products in DB for "${query}". Triggering LIVE search.`,
+        `No products in DB for "${query}". Triggering background enrichment.`,
       );
-      // Trigger Live Scrape using the RAW user query — retailers should get "white shirt", not "shirt"
-      await this.scrapeLiveAndPersist(query);
-      message = 'I found some new products for you from live search.';
+      message = "We're adding items for this search";
+      catalogStatus = 'learning';
+
+      // Trigger background scraping for catalog enrichment (fire-and-forget)
+      this.backgroundScrapeNextPages(query, 1, 2).catch((err) =>
+        this.logger.error(
+          `Background enrichment failed for "${query}": ${err.message}`,
+        ),
+      );
     }
 
-    // 6. Persist Assistant Message (AI Response)
+    // 6. Persist Assistant Message
     await this.chatService.addMessage(
       chat.id,
       getEnumKeyAsType(MessageRole, MessageRole.ASSISTANT) as MessageRole,
       message,
     );
 
-    return { chatId: chat.id, message };
+    return {
+      chatId: chat.id,
+      message,
+      catalogStatus,
+      intentType: intent.type,
+      confidence: intent.confidence,
+    };
   }
 
   /**
    * Pagination & Result Retrieval (for ChatController)
    *
-   * Cursor format: "score:id" composite string (e.g. "0.7230:cc164cd0-...")
-   * pgvector-correct: WHERE (sim < :score) OR (sim = :score AND id > :id)
+   * First page: tsvector full-text search (ts_rank)
+   * Subsequent pages: embedding similarity (cosine)
+   *
+   * Returns ranking signals: lexicalScore, semanticScore, popularity, rating
    */
   async searchWithState(
     chatState: ChatState,
@@ -261,93 +310,62 @@ export class SearchService {
       throw new Error('Chat state missing query');
     }
 
-    const confidence = (intentConfidence as any)?.overall ?? 0.5;
     const typedFilters = (filters as any) ?? {};
     const isFirstPage = !cursor;
     const safeLimit = Number(limit) || 20;
 
     // ======================================================================
-    // FIRST PAGE: Lexical/keyword search — respects exact user intent
-    // Uses OR logic across multiple text fields to avoid over-filtering.
-    // Products scraped for "white shirt" may have "white" only in color
-    // attribute, not in title — so we match ANY word in ANY text field.
+    // FIRST PAGE: Full-text search using tsvector (ts_rank)
+    // Weighted: A → title/category, B → brand/color/gender/material/fit/style, C → description
     // ======================================================================
     if (isFirstPage) {
-      // Build keyword search terms from the raw query
+      // Build tsquery from user query
       const queryWords = currentQuery
         .toLowerCase()
         .trim()
         .split(/\s+/)
         .filter((w: string) => w.length > 1);
 
-      // OR logic across title + description + brand + category + color + style_tags
-      // Each word can match in ANY field — a product matching more words ranks higher
-      let titleFilter = '';
-      let matchScoreExpr = '0';
-      if (queryWords.length > 0) {
-        const wordConditions = queryWords.map((word: string) => {
-          const escaped = word.replace(/'/g, "''");
-          return `(
-            p.title ILIKE '%${escaped}%' 
-            OR p.description ILIKE '%${escaped}%' 
-            OR p.brand ILIKE '%${escaped}%' 
-            OR p.category ILIKE '%${escaped}%'
-            OR EXISTS (SELECT 1 FROM unnest(p.color) col WHERE col ILIKE '%${escaped}%')
-            OR EXISTS (SELECT 1 FROM unnest(p.style_tags) tag WHERE tag ILIKE '%${escaped}%')
-          )`;
-        });
-        // Product must match ALL words (each word can be in any field)
-        titleFilter = `AND (${wordConditions.join(' AND ')})`;
+      // Construct plainto_tsquery for full-text matching
+      const tsQueryString = queryWords.join(' & ');
 
-        // Score: count how many query words match (for ranking)
-        const scoreTerms = queryWords.map((word: string) => {
-          const escaped = word.replace(/'/g, "''");
-          return `CASE WHEN 
-            p.title ILIKE '%${escaped}%' 
-            OR p.description ILIKE '%${escaped}%' 
-            OR p.brand ILIKE '%${escaped}%' 
-            OR p.category ILIKE '%${escaped}%'
-            OR EXISTS (SELECT 1 FROM unnest(p.color) col WHERE col ILIKE '%${escaped}%')
-            OR EXISTS (SELECT 1 FROM unnest(p.style_tags) tag WHERE tag ILIKE '%${escaped}%')
-          THEN 1 ELSE 0 END`;
-        });
-        matchScoreExpr = scoreTerms.join(' + ');
-      }
+      // Build filter clauses
+      let filterClauses = '';
 
-      // Apply only hard price filters (no color/category DB filtering — let text match handle it)
-      let priceFilter = '';
       const pMin = typedFilters.priceMin ?? typedFilters.price_min;
       if (pMin != null && !isNaN(Number(pMin))) {
-        priceFilter += ` AND p.price >= ${Number(pMin)}`;
+        filterClauses += ` AND p.price >= ${Number(pMin)}`;
       }
       const pMax = typedFilters.priceMax ?? typedFilters.price_max;
       if (pMax != null && !isNaN(Number(pMax))) {
-        priceFilter += ` AND p.price <= ${Number(pMax)}`;
+        filterClauses += ` AND p.price <= ${Number(pMax)}`;
+      }
+      if (typedFilters.gender) {
+        const escapedGender = typedFilters.gender.replace(/'/g, "''");
+        filterClauses += ` AND p.gender = '${escapedGender}'`;
       }
 
-      // Compute queryHash to scope results to products scraped for THIS query
       const queryHash = this.computeQueryHash(currentQuery);
 
+      // ts_rank gives lexical relevance score; also include popularity & rating
       const lexicalSql = `
         SELECT
           p.id, p.title, p.description, p.brand, p.category, p.price,
           p.product_url AS "productUrl", p.images, p.retailer,
           p.scrap_status AS "scrapStatus", p.last_scraped AS "lastScraped",
-          1.0 AS similarity, -- Force max similarity so Page 2 starts embedding search from top
-          (${matchScoreExpr}) AS match_score,
+          p.popularity, p.rating,
+          ts_rank(p.tsv, to_tsquery('english', '${tsQueryString}')) AS "lexicalScore",
+          1.0 AS similarity,
           COUNT(*) OVER() AS total_count
         FROM products p
-        INNER JOIN product_queries pq ON pq.product_id = p.id AND pq.query_hash = '${queryHash}'
-        WHERE 1=1
-        ${titleFilter}
-        ${priceFilter}
-        ORDER BY match_score DESC, pq.page_found ASC, pq.rank ASC, p.id ASC
+        LEFT JOIN product_queries pq ON pq.product_id = p.id AND pq.query_hash = '${queryHash}'
+        WHERE p.tsv @@ to_tsquery('english', '${tsQueryString}')
+        ${filterClauses}
+        ORDER BY "lexicalScore" DESC, p.popularity DESC, pq.page_found ASC NULLS LAST, pq.rank ASC NULLS LAST, p.id ASC
         LIMIT ${safeLimit}
       `;
 
-      this.logger.log(
-        `[LEXICAL] First page query for "${currentQuery}": ${lexicalSql.replace(/\s+/g, ' ').trim().substring(0, 200)}...`,
-      );
+      this.logger.log(`[LEXICAL/TSV] First page query for "${currentQuery}"`);
 
       const searchResults =
         await this.prisma.client.$queryRawUnsafe<
@@ -355,8 +373,19 @@ export class SearchService {
         >(lexicalSql);
 
       this.logger.log(
-        `[LEXICAL] ${searchResults.length} results for "${currentQuery}" (first page, no cursor)`,
+        `[LEXICAL/TSV] ${searchResults.length} results for "${currentQuery}" (first page)`,
       );
+
+      // If tsvector returns nothing, fall back to ILIKE for partial matches
+      if (searchResults.length === 0 && queryWords.length > 0) {
+        return this.fallbackILikeSearch(
+          currentQuery,
+          queryWords,
+          queryHash,
+          filterClauses,
+          safeLimit,
+        );
+      }
 
       return this.processSearchResults(
         searchResults,
@@ -367,11 +396,9 @@ export class SearchService {
     }
 
     // ======================================================================
-    // SUBSEQUENT PAGES: Embedding similarity — for discovery & expansion
-    // e.g. "white shirt" on page 2+ may show cream/off-white shirts
+    // SUBSEQUENT PAGES: Embedding similarity
     // ======================================================================
 
-    // Composite cursor: "score:id"
     let cursorClause = '';
     const sepIdx = cursor!.indexOf(':');
     if (sepIdx > 0) {
@@ -389,7 +416,6 @@ export class SearchService {
       }
     }
 
-    // Only apply price filters on later pages, not color/category (embedding handles semantic match)
     let priceFilter = '';
     const pMin = typedFilters.priceMin ?? typedFilters.price_min;
     if (pMin != null && !isNaN(Number(pMin))) {
@@ -405,11 +431,17 @@ export class SearchService {
         p.id, p.title, p.description, p.brand, p.category, p.price,
         p.product_url AS "productUrl", p.images, p.retailer,
         p.scrap_status AS "scrapStatus", p.last_scraped AS "lastScraped",
+        p.popularity, p.rating,
         CASE
           WHEN p.embedding IS NOT NULL AND cs.last_embedding IS NOT NULL
           THEN COALESCE(1 - (p.embedding <=> cs.last_embedding), 0)
           ELSE 0
         END AS similarity,
+        CASE
+          WHEN p.embedding IS NOT NULL AND cs.last_embedding IS NOT NULL
+          THEN COALESCE(1 - (p.embedding <=> cs.last_embedding), 0)
+          ELSE 0
+        END AS "semanticScore",
         COUNT(*) OVER() AS total_count
       FROM products p
       CROSS JOIN chat_state cs
@@ -446,11 +478,159 @@ export class SearchService {
   }
 
   // ==========================================================================
+  // SLOT-BASED MULTI-QUERY RETRIEVAL
+  // ==========================================================================
+
+  /**
+   * Run parallel searches for each outfit slot.
+   * Returns grouped results by slot key.
+   */
+  private async searchSlots(
+    slots: OutfitSlots,
+    filters: IntentFilters,
+  ): Promise<Record<string, any>> {
+    const slotEntries = Object.entries(slots).filter(([, query]) => !!query);
+    const results = await Promise.allSettled(
+      slotEntries.map(async ([slotKey, slotQuery]) => {
+        const products = await this.searchCatalogForSlot(slotQuery!, filters);
+        return { slotKey, products };
+      }),
+    );
+
+    const grouped: Record<string, any> = {};
+    for (const result of results) {
+      if (result.status === 'fulfilled') {
+        grouped[result.value.slotKey] = result.value.products;
+      } else {
+        this.logger.error(`Slot search failed: ${result.reason?.message}`);
+      }
+    }
+    return grouped;
+  }
+
+  /**
+   * Search catalog for a single slot query (simplified DB search).
+   */
+  private async searchCatalogForSlot(
+    slotQuery: string,
+    filters: IntentFilters,
+    limit: number = 10,
+  ) {
+    const queryWords = slotQuery
+      .toLowerCase()
+      .trim()
+      .split(/\s+/)
+      .filter((w) => w.length > 1);
+
+    if (queryWords.length === 0) return [];
+
+    const tsQueryString = queryWords.join(' & ');
+
+    let filterClauses = '';
+    if (filters.priceMin != null) {
+      filterClauses += ` AND p.price >= ${Number(filters.priceMin)}`;
+    }
+    if (filters.priceMax != null) {
+      filterClauses += ` AND p.price <= ${Number(filters.priceMax)}`;
+    }
+
+    const sql = `
+      SELECT
+        p.id, p.title, p.brand, p.category, p.price,
+        p.product_url AS "productUrl", p.images, p.retailer,
+        p.popularity, p.rating,
+        ts_rank(p.tsv, to_tsquery('english', '${tsQueryString}')) AS "lexicalScore"
+      FROM products p
+      WHERE p.tsv @@ to_tsquery('english', '${tsQueryString}')
+      ${filterClauses}
+      ORDER BY "lexicalScore" DESC, p.popularity DESC
+      LIMIT ${limit}
+    `;
+
+    try {
+      return await this.prisma.client.$queryRawUnsafe(sql);
+    } catch (err) {
+      this.logger.error(`Slot query "${slotQuery}" failed: ${err.message}`);
+      return [];
+    }
+  }
+
+  // ==========================================================================
   // HELPER METHODS
   // ==========================================================================
 
   /**
-   * Process results: format products, build composite cursor, trigger fallback
+   * Fallback ILIKE search for when tsvector doesn't match
+   * (e.g. partial/fuzzy terms that stemming can't handle)
+   */
+  private async fallbackILikeSearch(
+    currentQuery: string,
+    queryWords: string[],
+    queryHash: string,
+    filterClauses: string,
+    limit: number,
+  ) {
+    const wordConditions = queryWords.map((word: string) => {
+      const escaped = word.replace(/'/g, "''");
+      return `(
+        p.title ILIKE '%${escaped}%' 
+        OR p.description ILIKE '%${escaped}%' 
+        OR p.brand ILIKE '%${escaped}%' 
+        OR p.category ILIKE '%${escaped}%'
+        OR EXISTS (SELECT 1 FROM unnest(p.color) col WHERE col ILIKE '%${escaped}%')
+        OR EXISTS (SELECT 1 FROM unnest(p.style_tags) tag WHERE tag ILIKE '%${escaped}%')
+      )`;
+    });
+    const titleFilter = `AND (${wordConditions.join(' AND ')})`;
+
+    const scoreTerms = queryWords.map((word: string) => {
+      const escaped = word.replace(/'/g, "''");
+      return `CASE WHEN 
+        p.title ILIKE '%${escaped}%' 
+        OR p.description ILIKE '%${escaped}%' 
+        OR p.brand ILIKE '%${escaped}%' 
+        OR p.category ILIKE '%${escaped}%'
+        OR EXISTS (SELECT 1 FROM unnest(p.color) col WHERE col ILIKE '%${escaped}%')
+        OR EXISTS (SELECT 1 FROM unnest(p.style_tags) tag WHERE tag ILIKE '%${escaped}%')
+      THEN 1 ELSE 0 END`;
+    });
+    const matchScoreExpr = scoreTerms.join(' + ');
+
+    const fallbackSql = `
+      SELECT
+        p.id, p.title, p.description, p.brand, p.category, p.price,
+        p.product_url AS "productUrl", p.images, p.retailer,
+        p.scrap_status AS "scrapStatus", p.last_scraped AS "lastScraped",
+        p.popularity, p.rating,
+        (${matchScoreExpr})::float / ${queryWords.length} AS "lexicalScore",
+        1.0 AS similarity,
+        COUNT(*) OVER() AS total_count
+      FROM products p
+      LEFT JOIN product_queries pq ON pq.product_id = p.id AND pq.query_hash = '${queryHash}'
+      WHERE 1=1
+      ${titleFilter}
+      ${filterClauses}
+      ORDER BY "lexicalScore" DESC, p.popularity DESC, pq.page_found ASC NULLS LAST, p.id ASC
+      LIMIT ${limit}
+    `;
+
+    this.logger.log(`[ILIKE FALLBACK] for "${currentQuery}"`);
+
+    const searchResults =
+      await this.prisma.client.$queryRawUnsafe<
+        Array<ProductSearchResult & { total_count: bigint }>
+      >(fallbackSql);
+
+    this.logger.log(
+      `[ILIKE FALLBACK] ${searchResults.length} results for "${currentQuery}"`,
+    );
+
+    return this.processSearchResults(searchResults, limit, currentQuery, true);
+  }
+
+  /**
+   * Process results: format products, build composite cursor, return with ranking signals.
+   * NO live scrape fallback — returns empty with catalogStatus if no results.
    */
   private async processSearchResults(
     searchResults: Array<ProductSearchResult & { total_count: bigint }>,
@@ -465,34 +645,41 @@ export class SearchService {
         scrapStatus: product.scrapStatus,
         lastScraped: product.lastScraped,
         score: product.similarity,
+        lexicalScore: product.lexicalScore ?? null,
+        semanticScore: product.semanticScore ?? null,
+        popularity: product.popularity ?? 0,
+        rating: product.rating ?? 0,
       }),
     );
 
     const totalCount =
       searchResults.length > 0 ? Number(searchResults[0].total_count) : 0;
 
-    // Composite cursor: "score:id" — pgvector stable pagination
-    // Use totalCount (from COUNT(*) OVER()) to know if more rows exist beyond what LIMIT returned
     const lastResult = searchResults[searchResults.length - 1];
     const nextCursor: string | null =
       lastResult && totalCount > searchResults.length
         ? `${lastResult.similarity}:${lastResult.id}`
         : null;
 
+    // NO live scrape fallback — return empty with catalog status
     if (paginatedProducts.length === 0 && isFirstPage) {
       this.logger.log(
-        `No products found via state search. Triggering live scrape fallback.`,
+        `No products found for "${query}". Returning empty with catalogStatus.`,
       );
 
-      const allProducts = await this.scrapeLiveAndPersist(query);
-      const sliced = allProducts.slice(0, limit);
+      // Trigger background enrichment (fire-and-forget)
+      this.backgroundScrapeNextPages(query, 1, 2).catch((err) => {
+        this.logger.error(`Background enrichment failed: ${err.message}`);
+      });
 
       return {
-        products: sliced.map((p) => ({ ...p, score: p.score ?? null })),
-        total: allProducts.length,
-        nextCursor: null, // Live results have no embedding scores yet
-        hasMore: allProducts.length > limit,
+        products: [],
+        total: 0,
+        nextCursor: null,
+        hasMore: false,
         limit,
+        catalogStatus: 'learning',
+        message: "We're adding items for this search",
       };
     }
 
@@ -511,8 +698,7 @@ export class SearchService {
   }
 
   /**
-   * Check if products matching this query exist in the DB.
-   * Uses embedding similarity — checks if any product has similarity >= 0.5
+   * Check product existence using embedding similarity.
    */
   private async checkProductExistence(
     embedding: number[],
@@ -521,7 +707,6 @@ export class SearchService {
   ): Promise<boolean> {
     const vectorString = `[${embedding.join(',')}]`;
 
-    // Only apply price filters — don't filter by color/category/brand to avoid over-filtering
     let priceFilter = '';
     const pMin = filters.priceMin ?? filters.price_min;
     if (pMin != null && !isNaN(Number(pMin))) {
@@ -553,7 +738,6 @@ export class SearchService {
     confidence: number,
   ) {
     const vectorString = `[${embedding.join(',')}]`;
-    // Use simplified query to get top 20 IDs
     const result = await this.prisma.client.$queryRaw<
       Array<{
         id: string;
@@ -575,21 +759,14 @@ export class SearchService {
   // EMBEDDING MANAGEMENT
   // ==========================================================================
 
-  /**
-   * Normalize query for consistent caching
-   */
   private normalizeQuery(query: string): string {
     return query.toLowerCase().trim().replace(/\s+/g, ' ');
   }
 
-  /**
-   * Get or generate embedding with LRU caching and concurrent request protection
-   */
   private async getOrGenerateEmbedding(query: string): Promise<number[]> {
     const cacheKey = this.normalizeQuery(query);
     const now = Date.now();
 
-    // Check cache
     const cached = this.embeddingCache.get(cacheKey);
     if (
       cached &&
@@ -602,7 +779,6 @@ export class SearchService {
       return cached.embedding;
     }
 
-    // Check if already generating
     const inflight = this.embeddingInflight.get(cacheKey);
     if (inflight) {
       this.logger.debug(
@@ -611,25 +787,19 @@ export class SearchService {
       return inflight;
     }
 
-    // Generate new embedding
     this.logger.log(`Generating new embedding for query: "${query}"`);
     const embeddingPromise = this.geminiService
       .generateEmbedding(query)
       .then((embedding) => {
-        // Cache it
         this.embeddingCache.set(cacheKey, {
           embedding,
           timestamp: now,
           accessCount: 1,
         });
-
-        // Remove from inflight
         this.embeddingInflight.delete(cacheKey);
-
         return embedding;
       })
       .catch((err) => {
-        // Remove from inflight on error
         this.embeddingInflight.delete(cacheKey);
         throw err;
       });
@@ -639,13 +809,9 @@ export class SearchService {
   }
 
   // ==========================================================================
-  // BACKGROUND SCRAPING
+  // BACKGROUND SCRAPING (kept intact — decoupled from search path)
   // ==========================================================================
 
-  /**
-   * Compute deterministic SHA-256 hash for a query string.
-   * Uses the mechanical normalizeQuery() (not LLM output) for consistency.
-   */
   computeQueryHash(query: string): string {
     return createHash('sha256')
       .update(this.normalizeQuery(query))
@@ -654,7 +820,6 @@ export class SearchService {
 
   /**
    * Background scrape multiple pages for all retailers with priority queuing.
-   * Now driven by CrawlProgress DB — only scrapes pages beyond lastPage.
    * Public so ChatController can trigger when DB results are running low.
    */
   async backgroundScrapeNextPages(
@@ -698,7 +863,6 @@ export class SearchService {
     ];
 
     for (const retailer of allRetailers) {
-      // Check CrawlProgress to determine which pages need scraping
       const progress = await this.crawlProgressService.getProgress(
         retailer.name,
         queryHash,
@@ -723,7 +887,6 @@ export class SearchService {
           timeout: SEARCH_CONSTANTS.SCRAPE_TIMEOUT_MS,
         };
 
-        // Meesho needs scroll iterations
         if (retailer.name === RETAILERS.MEESHO) {
           options.scrollIterations =
             page === 1
@@ -755,7 +918,6 @@ export class SearchService {
       }
     }
 
-    // Fire and forget all jobs
     Promise.all(jobs)
       .then(() => {
         this.logger.log(
@@ -768,12 +930,9 @@ export class SearchService {
   }
 
   // ==========================================================================
-  // LAZY DETAIL SCRAPING & STALE PRODUCT REFRESH
+  // LAZY DETAIL SCRAPING & STALE PRODUCT REFRESH (kept intact)
   // ==========================================================================
 
-  /**
-   * Validate URL safely
-   */
   private isValidUrl(urlString: string): boolean {
     try {
       new URL(urlString);
@@ -783,9 +942,6 @@ export class SearchService {
     }
   }
 
-  /**
-   * Extract domain from URL safely
-   */
   private extractDomain(urlString: string): string | null {
     try {
       return new URL(urlString).hostname.replace('www.', '');
@@ -795,12 +951,10 @@ export class SearchService {
   }
 
   // ==========================================================================
-  // LIVE SCRAPING & PERSISTENCE
+  // LIVE SCRAPING & PERSISTENCE (kept intact — but NOT called from search path)
+  // These methods remain for background catalog enrichment and other callers.
   // ==========================================================================
 
-  /**
-   * Deduplicate products by URL
-   */
   private deduplicateProducts(products: ParsedProduct[]): ParsedProduct[] {
     const seen = new Set<string>();
     return products.filter((p) => {
@@ -812,15 +966,10 @@ export class SearchService {
     });
   }
 
-  /**
-   * Scrape live from all retailers with resilient error handling.
-   * Now uses CrawlProgress to avoid duplicate scrapes across users.
-   */
   private async scrapeLiveAndPersist(query: string): Promise<any[]> {
     const queryHash = this.computeQueryHash(query);
     const normalizedQuery = this.normalizeQuery(query);
 
-    // Check which retailers need page 1 scraping
     const myntraShouldScrape = await this.crawlProgressService.shouldScrape(
       RETAILERS.MYNTRA,
       queryHash,
@@ -839,7 +988,6 @@ export class SearchService {
         : Promise.resolve([] as ParsedProduct[]),
     ]);
 
-    // Background jobs for Amazon and Meesho (check CrawlProgress inside)
     this.scrapeLiveMeeshoIfNeeded(query, queryHash).catch((err) =>
       this.logger.error(`Background Meesho search failed: ${err.message}`),
     );
@@ -862,11 +1010,9 @@ export class SearchService {
       }
     });
 
-    // Deduplicate before persisting
     const dedupedProducts = this.deduplicateProducts(allParsed);
 
     let persistedProducts: any[] = [];
-    // Persist to database
     if (dedupedProducts.length > 0) {
       try {
         persistedProducts = await this.productSaveService.upsertProducts(
@@ -874,10 +1020,8 @@ export class SearchService {
           getEnumKeyAsType(ScrapStatus, ScrapStatus.BASIC) as ScrapStatus,
         );
 
-        // Link products to query for cross-chat reuse
         const productIds = persistedProducts.map((p) => p.id).filter(Boolean);
 
-        // Group by retailer and link
         const byRetailer = new Map<string, string[]>();
         for (const p of persistedProducts) {
           const r = p.retailer || 'unknown';
@@ -894,7 +1038,6 @@ export class SearchService {
             );
         }
 
-        // Update CrawlProgress for each retailer that was scraped
         for (let i = 0; i < retailerNames.length; i++) {
           const retailer = retailerNames[i];
           const scraped = i === 0 ? myntraShouldScrape : flipkartShouldScrape;
@@ -917,7 +1060,6 @@ export class SearchService {
           }
         }
 
-        // Generate embeddings asynchronously (fire-and-forget)
         this.generateEmbeddingsAsync(
           dedupedProducts.map((p) => p.productUrl),
         ).catch((err) => {
@@ -928,7 +1070,7 @@ export class SearchService {
         });
 
         this.logger.log(
-          `Persisted ${dedupedProducts.length} live-scraped products (BASIC only, detail scraping is click-triggered)`,
+          `Persisted ${dedupedProducts.length} live-scraped products (BASIC only)`,
         );
       } catch (err) {
         this.logger.error(
@@ -938,7 +1080,6 @@ export class SearchService {
       }
     }
 
-    // Return formatted response
     return persistedProducts.map((p) => ({
       id: p.id,
       title: p.title,
@@ -953,9 +1094,6 @@ export class SearchService {
     }));
   }
 
-  /**
-   * Generate embeddings asynchronously (strictly fire-and-forget)
-   */
   private async generateEmbeddingsAsync(productUrls: string[]): Promise<void> {
     const embeddingPromises = productUrls.map((url) =>
       this.productSaveService.generateAndSaveEmbedding(url).catch((err) => {
@@ -977,7 +1115,7 @@ export class SearchService {
   }
 
   // ==========================================================================
-  // RETAILER-SPECIFIC SCRAPERS
+  // RETAILER-SPECIFIC SCRAPERS (kept intact — NOT called from search path)
   // ==========================================================================
 
   private async scrapeLiveMyntra(query: string): Promise<ParsedProduct[]> {
@@ -1037,9 +1175,6 @@ export class SearchService {
     return [];
   }
 
-  /**
-   * CrawlProgress-aware wrapper for Meesho background scraping.
-   */
   private async scrapeLiveMeeshoIfNeeded(
     query: string,
     queryHash: string,
@@ -1079,9 +1214,6 @@ export class SearchService {
     }
   }
 
-  /**
-   * CrawlProgress-aware wrapper for Amazon background queuing.
-   */
   private async queueLiveAmazonIfNeeded(
     query: string,
     queryHash: string,

@@ -8,7 +8,7 @@ export class GeminiService implements OnModuleInit {
   private client: GoogleGenAI;
   // Using gemini-embedding-001 with 1536 dimensions to match DB schema
   private readonly embeddingModel = 'gemini-embedding-001';
-  private readonly outputDimensionality = 1536;
+  private readonly outputDimensionality = 768;
 
   constructor(private readonly configService: ConfigService) {}
 

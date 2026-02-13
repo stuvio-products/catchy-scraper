@@ -108,6 +108,9 @@ model Product {
   color        String[] // ["red", "maroon"]
   size         String[] // ["S", "M", "L"]
   styleTags    String[]                     @map("style_tags") // ["party", "summer", "evening"]
+  material     String[] // ["cotton", "polyester"]
+  fit          String[] // ["slim", "regular", "oversized"]
+  gender       String? // "men", "women", "unisex"
   price        Int?
   retailer     String?
   productUrl   String?                      @unique @map("product_url")
@@ -118,7 +121,10 @@ model Product {
   lastScraped  DateTime?                    @map("last_scraped")
   lastDetailedScrapedAt DateTime?           @map("last_detailed_scraped_at")
   lastScrapeAttemptAt   DateTime?           @map("last_scrape_attempt_at")
-  embedding    Unsupported("vector(1536)")?
+  popularity   Float?                       @default(0)
+  rating       Float?                       @default(0)
+  embedding    Unsupported("vector(768)")?
+  tsv          Unsupported("tsvector")?
   createdAt    DateTime                     @default(now()) @map("created_at")
   updatedAt    DateTime                     @updatedAt @map("updated_at")
   savedIn      SavedProduct[]
@@ -130,6 +136,8 @@ model Product {
   @@index([price])
   @@index([inStock])
   @@index([scrapStatus])
+  @@index([gender])
+  @@index([category, gender])
   @@map("products")
 }
 
@@ -171,7 +179,7 @@ model ChatState {
   intentConfidence Json?                       @map("intent_confidence")
   mode            String?                      @default("SEARCH")
   lastCursorScore Float?                       @map("last_cursor_score")
-  lastEmbedding   Unsupported("vector(1536)")? @map("last_embedding")
+  lastEmbedding   Unsupported("vector(768)")? @map("last_embedding")
 
   chat Chat @relation(fields: [chatId], references: [id], onDelete: Cascade)
 

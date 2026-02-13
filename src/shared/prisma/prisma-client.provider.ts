@@ -3,11 +3,10 @@ import { Pool } from 'pg';
 import { PrismaClient } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { readReplicas } from '@prisma/extension-read-replicas';
-import {
-  ACTUAL_DATABASE_URL,
-  ACTUAL_REPLICA_DATABASE_URL,
-  IS_PRODUCTION_DB,
-} from '@/shared/prisma/database.config';
+
+const IS_PRODUCTION_DB = false;
+const DATABASE_URL = process.env.DATABASE_URL;
+const REPLICA_DATABASE_URL = process.env.DATABASE_REPLICA_URL;
 
 type PrismaClientType = ReturnType<typeof createPrisma>;
 
@@ -24,8 +23,11 @@ function createPrisma() {
     console.log('🟢 Using LOCAL database (default)');
   }
 
-  const mainPool = new Pool({ connectionString: ACTUAL_DATABASE_URL });
-  const replicaPool = new Pool({ connectionString: ACTUAL_REPLICA_DATABASE_URL });
+  console.log(DATABASE_URL);
+  console.log(REPLICA_DATABASE_URL);
+
+  const mainPool = new Pool({ connectionString: DATABASE_URL });
+  const replicaPool = new Pool({ connectionString: REPLICA_DATABASE_URL });
 
   const mainAdapter = new PrismaPg(mainPool);
   const replicaAdapter = new PrismaPg(replicaPool);
