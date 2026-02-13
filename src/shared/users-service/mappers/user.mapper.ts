@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { User, UserStyleProfile } from '@/prisma/client';
-import { UserWithStyleProfile } from '../entities/user.entity';
+import { UserWithStyleProfile } from '@/shared/users-service/entities/user.entity';
 
 export interface UserDto {
   id: string;

@@ -1,8 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { ScrapeOrchestratorService } from './scrape-orchestrator.service';
-import { ParserService } from './parser.service';
-import { ParsedProduct } from '../interfaces/parsed-product.interface';
-import { Retailer } from '../types/retailer.type';
+import { ScrapeOrchestratorService } from '@/shared/scraping/services/scrape-orchestrator.service';
+import { ParserService } from '@/shared/scraping/services/parser.service';
+import { ParsedProduct } from '@/shared/scraping/interfaces/parsed-product.interface';
+import { Retailer } from '@/shared/scraping/types/retailer.type';
 
 @Injectable()
 export class ScraperService {

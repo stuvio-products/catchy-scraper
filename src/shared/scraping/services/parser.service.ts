@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import * as cheerio from 'cheerio';
-import { ParsedProduct } from '../interfaces/parsed-product.interface';
-import { Retailer } from '../types/retailer.type';
+import { ParsedProduct } from '@/shared/scraping/interfaces/parsed-product.interface';
+import { Retailer } from '@/shared/scraping/types/retailer.type';
 
 @Injectable()
 export class ParserService {

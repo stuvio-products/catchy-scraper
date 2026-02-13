@@ -1,10 +1,10 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { ScrapeStrategy } from '../enums/scrape-strategy.enum';
+import { ScrapeStrategy } from '@/shared/domain/enums/scrape-strategy.enum';
 import {
   DomainStrategyConfig,
   IStrategyResolver,
-} from '../interfaces/domain-strategy.interface';
-import * as domainStrategiesConfig from '../config/domain-strategies.json';
+} from '@/shared/domain/interfaces/domain-strategy.interface';
+import * as domainStrategiesConfig from '@/shared/domain/config/domain-strategies.json';
 
 @Injectable()
 export class DomainStrategyService implements IStrategyResolver {

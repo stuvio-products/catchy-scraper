@@ -11,7 +11,7 @@ import { Proxy } from '@/shared/proxy/interfaces/proxy.interface';
 import {
   BrowserInstance,
   BrowserPoolStats,
-} from '../interfaces/browser-instance.interface';
+} from '@/shared/browser/interfaces/browser-instance.interface';
 import { v4 as uuidv4 } from 'uuid';
 
 @Injectable()

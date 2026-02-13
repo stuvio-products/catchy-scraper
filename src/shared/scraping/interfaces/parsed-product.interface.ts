@@ -1,4 +1,4 @@
-import { Retailer } from '../types/retailer.type';
+import { Retailer } from '@/shared/scraping/types/retailer.type';
 
 export interface ParsedProduct {
   productName: string;

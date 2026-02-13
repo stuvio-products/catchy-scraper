@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { loadEnv } from '@/shared/config/load-env';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { BullModule } from '@nestjs/bullmq';
 import { CacheModule } from '@nestjs/cache-manager';
@@ -22,12 +23,14 @@ import { ChatModule } from './chat/chat.module'; // Re-enabled
 import { SearchModule } from './search/search.module';
 import { ProductViewModule } from './product-view/product-view.module';
 
+loadEnv();
+
 @Module({
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
       validationSchema,
-      envFilePath: '.env',
+      ignoreEnvFile: true,
     }),
     CacheModule.registerAsync({
       isGlobal: true,

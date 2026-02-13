@@ -11,12 +11,9 @@ import {
 } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
-import {
-  QUEUE_NAMES,
-  QUEUE_CONFIG,
-} from '../../../shared/queue/queue.constants';
-import { ScrapeJob } from '../../../shared/queue/interfaces/scrape-job.interface';
-import { CreateScrapeJobDto } from '../dto/create-scrape-job.dto';
+import { QUEUE_NAMES, QUEUE_CONFIG } from '@/shared/queue/queue.constants';
+import { ScrapeJob } from '@/shared/queue/interfaces/scrape-job.interface';
+import { CreateScrapeJobDto } from '@/apps/api/dto/create-scrape-job.dto';
 import { v4 as uuidv4 } from 'uuid';
 
 @Controller('scrape')

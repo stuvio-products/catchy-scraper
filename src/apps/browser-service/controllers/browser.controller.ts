@@ -10,7 +10,7 @@ import {
 } from '@nestjs/common';
 import { BrowserPoolService } from '@/shared/browser/services/browser-pool.service';
 import type { ScrapeRequest } from '@/shared/scraping/interfaces/scraper.interface';
-import { BrowserServiceGuard } from '../guards/browser-service.guard';
+import { BrowserServiceGuard } from '@/apps/browser-service/guards/browser-service.guard';
 
 @Controller('browser')
 @UseGuards(BrowserServiceGuard)

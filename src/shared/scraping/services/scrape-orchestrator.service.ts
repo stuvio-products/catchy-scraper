@@ -1,13 +1,13 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { DomainStrategyService } from '../../domain/services/domain-strategy.service';
-import { ScrapeStrategy } from '../../domain/enums/scrape-strategy.enum';
-import { FetchScraper } from '../scrapers/fetch.scraper';
-import { BrowserClientScraper } from '../scrapers/browser-client.scraper';
+import { DomainStrategyService } from '@/shared/domain/services/domain-strategy.service';
+import { ScrapeStrategy } from '@/shared/domain/enums/scrape-strategy.enum';
+import { FetchScraper } from '@/shared/scraping/scrapers/fetch.scraper';
+import { BrowserClientScraper } from '@/shared/scraping/scrapers/browser-client.scraper';
 import {
   ScrapeRequest,
   ScrapeResult,
 } from '@/shared/scraping/interfaces/scraper.interface';
-import { ScraperTelemetryService } from './scraper-telemetry.service';
+import { ScraperTelemetryService } from '@/shared/scraping/services/scraper-telemetry.service';
 
 @Injectable()
 export class ScrapeOrchestratorService {

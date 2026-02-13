@@ -3,8 +3,8 @@ import {
   IScraper,
   ScrapeRequest,
   ScrapeResult,
-} from '../interfaces/scraper.interface';
-import { ScrapeStrategy } from '../../domain/enums/scrape-strategy.enum';
+} from '@/shared/scraping/interfaces/scraper.interface';
+import { ScrapeStrategy } from '@/shared/domain/enums/scrape-strategy.enum';
 import { request } from 'undici';
 
 @Injectable()
